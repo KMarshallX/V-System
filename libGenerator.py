@@ -1,12 +1,20 @@
 import numpy as np
 import random
-from numpy import math as npm
+import math
+
+DEFAULT_COLLISION_RETRY_COUNT = 3
+DEFAULT_VOXEL_OVERLAP_TOLERANCE = 0
 
 default={"k": 3,
           "epsilon": 10 , # Proportion between length & diameter
           "randmarg": 3 , # Randomness margin between length & diameter
           "sigma": 5, # Determines type deviation for Gaussian distributions
-          "stochparams": True} # Whether the generated parameters will also be stochastic
+          "stochparams": True, # Whether the generated parameters will also be stochastic
+          "collision_clearance": 0.0,
+          "collision_retry_count": DEFAULT_COLLISION_RETRY_COUNT,
+          "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE}
+
+active_properties = default.copy()
 
 def setProperties(properties):
     """
@@ -23,12 +31,30 @@ def setProperties(properties):
         properties = default
 
     global k, epsilon, randmarg, sigma, stochparams
+    global collision_clearance, collision_retry_count, voxel_overlap_tolerance
+    global active_properties
 
-    k = properties['k']
-    epsilon = properties['epsilon']
-    randmarg = properties['randmarg']
-    sigma = properties['sigma']
-    stochparams = properties['stochparams']
+    active_properties = default.copy()
+    active_properties.update(properties)
+
+    k = active_properties['k']
+    epsilon = active_properties['epsilon']
+    randmarg = active_properties['randmarg']
+    sigma = active_properties['sigma']
+    stochparams = active_properties['stochparams']
+    collision_clearance = active_properties['collision_clearance']
+    collision_retry_count = active_properties['collision_retry_count']
+    voxel_overlap_tolerance = active_properties['voxel_overlap_tolerance']
+
+def getProperties():
+    """
+    Returns a copy of the active generation properties.
+
+    Returns:
+        dict: The currently active property dictionary.
+
+    """
+    return active_properties.copy()
 
 def calParam(text, params):
     '''
@@ -77,17 +103,17 @@ def calBifurcation(d0):
     '''
     xtmp = (1 + alpha * alpha * alpha) ** (4.0 / 3) + 1 - alpha ** 4
     xtmpb = 2 * ((1 + alpha * alpha * alpha ) ** (2.0 / 3))
-    a1 = npm.acos(xtmp / xtmpb)
+    a1 = math.acos(xtmp / xtmpb)
 
     xtmp = (1 + alpha * alpha * alpha) ** (4.0 / 3) + (alpha ** 4) - 1
     xtmpb = 2 * alpha * alpha * ((1 + alpha * alpha * alpha) ** (2.0/3))
-    a2 = npm.acos(xtmp / xtmpb)
+    a2 = math.acos(xtmp / xtmpb)
 
     resp["d1"] = d1
     resp["d2"] = d2
     resp["d0"] = d0
-    resp["th1"] = a1 * 180 / npm.pi
-    resp["th2"] = a2 * 180 / npm.pi
+    resp["th1"] = a1 * 180 / math.pi
+    resp["th2"] = a2 * 180 / math.pi
     resp["co"] = getLength(d0)
 
     return resp

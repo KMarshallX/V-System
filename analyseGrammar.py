@@ -3,7 +3,205 @@ import numpy as np
 
 from math import pi, sin, cos, sqrt
 from utils import rotate, normalise, magnitude
+from libGenerator import getProperties
 DEGREES_TO_RADIANS = pi / 180
+JUNCTION_EXEMPTION_RADIUS_MULTIPLIER = 2.0
+RETRY_PERTURBATION_STEP_DEGREES = 5.0
+SEGMENT_DISTANCE_EPSILON = 1e-9
+
+def distance_between_segments(start_a, end_a, start_b, end_b):
+    """
+    Calculates the shortest distance between two 3D line segments.
+
+    Args:
+    start_a (np.ndarray): Start point of the first segment.
+    end_a (np.ndarray): End point of the first segment.
+    start_b (np.ndarray): Start point of the second segment.
+    end_b (np.ndarray): End point of the second segment.
+
+    Returns:
+    float: The shortest distance between the two segments.
+    """
+    u = end_a - start_a
+    v = end_b - start_b
+    w = start_a - start_b
+
+    a = np.dot(u, u)
+    b = np.dot(u, v)
+    c = np.dot(v, v)
+    d = np.dot(u, w)
+    e = np.dot(v, w)
+    denom = a * c - b * b
+
+    sc = 0.0
+    sN = 0.0
+    sD = denom
+    tc = 0.0
+    tN = 0.0
+    tD = denom
+
+    if denom < SEGMENT_DISTANCE_EPSILON:
+        sN = 0.0
+        sD = 1.0
+        tN = e
+        tD = c
+    else:
+        sN = (b * e - c * d)
+        tN = (a * e - b * d)
+
+        if sN < 0.0:
+            sN = 0.0
+            tN = e
+            tD = c
+        elif sN > sD:
+            sN = sD
+            tN = e + b
+            tD = c
+
+    if tN < 0.0:
+        tN = 0.0
+        if -d < 0.0:
+            sN = 0.0
+        elif -d > a:
+            sN = sD
+        else:
+            sN = -d
+            sD = a
+    elif tN > tD:
+        tN = tD
+        if (-d + b) < 0.0:
+            sN = 0.0
+        elif (-d + b) > a:
+            sN = sD
+        else:
+            sN = (-d + b)
+            sD = a
+
+    if abs(sN) > SEGMENT_DISTANCE_EPSILON:
+        sc = sN / sD
+    if abs(tN) > SEGMENT_DISTANCE_EPSILON:
+        tc = tN / tD
+
+    delta = w + (sc * u) - (tc * v)
+    return magnitude(delta)
+
+def build_segment(start, alpha, beta, length, diam, clearance, parent_context=None):
+    """
+    Builds the proposed segment geometry for the current turtle state.
+
+    Args:
+    start (np.ndarray): Start point of the segment.
+    alpha (float): Roll angle in degrees.
+    beta (float): Pitch angle in degrees.
+    length (float): Segment length.
+    diam (float): Segment diameter.
+    clearance (float): Extra radius margin for collision checks.
+    parent_context (dict, optional): Parent bifurcation metadata for junction exemption.
+
+    Returns:
+    dict: Segment metadata including endpoints, radius, and propagated angles.
+    """
+    dx, dy, dz = rotate(pitch_angle=beta * DEGREES_TO_RADIANS,
+                        roll_angle=alpha * DEGREES_TO_RADIANS,
+                        vector=normalise(start.copy(), length))
+    end = start + np.array([dx, dy, dz])
+    parent_origin = None
+    parent_radius = 0.0
+
+    if parent_context is not None:
+        parent_origin = parent_context['origin']
+        parent_radius = parent_context['radius']
+
+    return {
+        "start": start,
+        "end": end,
+        "delta": np.array([dx, dy, dz]),
+        "radius": 0.5 * diam + clearance,
+        "diam": diam,
+        "alpha": alpha,
+        "beta": beta,
+        "parent_origin": parent_origin,
+        "parent_radius": parent_radius,
+    }
+
+def in_junction_neighbourhood(segment):
+    """
+    Determines whether a segment starts inside the exempt parent bifurcation region.
+
+    Args:
+    segment (dict): Proposed segment metadata.
+
+    Returns:
+    bool: True when the segment start lies inside the parent junction neighbourhood.
+    """
+    if segment['parent_origin'] is None:
+        return False
+
+    return magnitude(segment['start'] - segment['parent_origin']) <= (
+        segment['parent_radius'] * JUNCTION_EXEMPTION_RADIUS_MULTIPLIER
+    )
+
+def segments_overlap(proposed_segment, accepted_segments):
+    """
+    Checks whether a proposed segment overlaps previously accepted vessel geometry.
+
+    Args:
+    proposed_segment (dict): Proposed segment metadata.
+    accepted_segments (list): Previously accepted segment metadata.
+
+    Returns:
+    bool: True if the proposed segment overlaps an accepted segment.
+    """
+    if in_junction_neighbourhood(proposed_segment):
+        return False
+
+    for segment in accepted_segments:
+        separation = distance_between_segments(
+            proposed_segment['start'],
+            proposed_segment['end'],
+            segment['start'],
+            segment['end'],
+        )
+        if separation <= (proposed_segment['radius'] + segment['radius']):
+            return True
+
+    return False
+
+def resolve_segment_collision(state, length, diam, accepted_segments, clearance,
+                              retry_count, parent_context):
+    """
+    Resolves a forward step against occupied geometry using retry perturbations.
+
+    Args:
+    state (tuple): Current turtle state.
+    length (float): Proposed segment length.
+    diam (float): Proposed segment diameter.
+    accepted_segments (list): Previously accepted segment metadata.
+    clearance (float): Extra radius margin for geometry checks.
+    retry_count (int): Number of alternate orientations to try after the first proposal.
+    parent_context (dict): Parent bifurcation metadata for junction exemption.
+
+    Returns:
+    dict or None: Accepted segment metadata, or None when all retries fail.
+    """
+    x, y, z, alpha, beta, _, _, _, _, _ = state
+    start = np.array([x, y, z], dtype=float)
+    base_segment = build_segment(start, alpha, beta, length, diam, clearance, parent_context)
+
+    if not segments_overlap(base_segment, accepted_segments):
+        return base_segment
+
+    for retry_idx in range(1, retry_count + 1):
+        perturbation = RETRY_PERTURBATION_STEP_DEGREES * retry_idx
+        retry_alpha = alpha + random.uniform(-perturbation, perturbation)
+        retry_beta = beta + random.uniform(-perturbation, perturbation)
+        retry_segment = build_segment(start, retry_alpha, retry_beta, length, diam,
+                                      clearance, parent_context)
+
+        if not segments_overlap(retry_segment, accepted_segments):
+            return retry_segment
+
+    return None
 
 def branching_turtle_to_coords(turtle_program, d0, theta=20., phi=20.):
 
@@ -43,8 +241,37 @@ def branching_turtle_to_coords(turtle_program, d0, theta=20., phi=20.):
 
     index = 0
     origin = (0.1, 0.1, 1.)
+    branch_contexts = list()
+    accepted_segments = list()
+    properties = getProperties()
+    collision_clearance = properties.get('collision_clearance', 0.0)
+    collision_retry_count = properties.get('collision_retry_count', -1)
+    collision_enabled = collision_retry_count >= 0
+    skip_failed_branch = False
+    skipped_nested_branches = 0
 
     for command in turtle_program:
+        if skip_failed_branch:
+            if command == '[':
+                skipped_nested_branches += 1
+            elif command == ']':
+                if skipped_nested_branches == 0:
+                    state = saved_states.pop()
+                    branch_contexts.pop()
+
+                    nanValues = []
+                    for i in range(stateSize): nanValues.append(float('nan'))
+                    yield tuple(nanValues)
+
+                    x, y, z, alpha, beta, diam, lseg, dx, dy, dz = state
+                    yield state
+                    skip_failed_branch = False
+                else:
+                    skipped_nested_branches -= 1
+
+            index += 1
+            continue
+
         x, y, z, alpha, beta, diam, lseg, dx, dy, dz = state
 
 
@@ -54,17 +281,42 @@ def branching_turtle_to_coords(turtle_program, d0, theta=20., phi=20.):
 
             if command.islower():
                 lseg, tdiam = eval_brackets(index, turtle_program)
-                dx, dy, dz = rotate(pitch_angle=beta*DEGREES_TO_RADIANS,
-                                    roll_angle=alpha*DEGREES_TO_RADIANS,
-                                    vector=normalise(np.array([x,y,z]),lseg))
-                
                 if tdiam > 0.0: diam = tdiam
 
-                #dx, dy, dz, alpha = proximity(state,origin,rim)
+                parent_context = branch_contexts[-1] if len(branch_contexts) > 0 else None
+                if collision_enabled:
+                    segment = resolve_segment_collision(
+                        state,
+                        lseg,
+                        diam,
+                        accepted_segments,
+                        collision_clearance,
+                        collision_retry_count,
+                        parent_context,
+                    )
 
-                x += dx
-                y += dy
-                z += dz
+                    if segment is None:
+                        if len(saved_states) == 0:
+                            break
+
+                        skip_failed_branch = True
+                        index += 1
+                        continue
+
+                    dx, dy, dz = segment['delta']
+                    x, y, z = segment['end']
+                    alpha = segment['alpha']
+                    beta = segment['beta']
+                    accepted_segments.append(segment)
+                else:
+                    dx, dy, dz = rotate(pitch_angle=beta*DEGREES_TO_RADIANS,
+                                        roll_angle=alpha*DEGREES_TO_RADIANS,
+                                        vector=normalise(np.array([x,y,z]),lseg))
+                    x += dx
+                    y += dy
+                    z += dz
+
+                #dx, dy, dz, alpha = proximity(state,origin,rim)
 
             state = (x, y, z, alpha, beta, diam, lseg, dx, dy, dz)
 
@@ -85,9 +337,14 @@ def branching_turtle_to_coords(turtle_program, d0, theta=20., phi=20.):
 
         elif command == '[':                       # Remember current state
             saved_states.append(state)
+            branch_contexts.append({
+                "origin": np.array([x, y, z], dtype=float),
+                "radius": 0.5 * diam,
+            })
 
         elif command == ']':                       # Return to previous state
             state = saved_states.pop()
+            branch_contexts.pop()
 
             nanValues = []
             for i in range(stateSize): nanValues.append(float('nan'))

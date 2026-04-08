@@ -3,7 +3,6 @@ import numpy as np
 import bezier as bz
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from numpy import math as npm
 
 def yaw(angle_degrees):
     """

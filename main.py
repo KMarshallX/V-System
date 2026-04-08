@@ -1,9 +1,8 @@
 import random
 import numpy as np
-import cv2
 from skimage import io
 from preprocessing import resize_stacks, resize_volume
-from libGenerator import setProperties
+from libGenerator import setProperties, DEFAULT_COLLISION_RETRY_COUNT, DEFAULT_VOXEL_OVERLAP_TOLERANCE
 from vSystem import F, I, R, B
 from analyseGrammar import branching_turtle_to_coords
 from visuals import plot_coords, print_coords
@@ -14,17 +13,20 @@ from utils import bezier_interpolation
 n = 5  # No. of networks to be created
 d0_mean = 20.0  # Diameter of base of tree
 d0_std = 5.0  # Standard deviation of base diameter
-tissue_volume = (512, 512, 140)  # Specify number of pixels in the tissue volume
-outpath = "/home/sweene01/Documents/Test/"  # Output path
+tissue_volume = (250, 250, 150)  # Specify number of pixels in the tissue volume
+outpath = "./output_syn/"  # Output path
 
 for file in range(n):
     # Lindenmayer System Parameters
     properties = {
-        "k": 3,
+        "k": 3, 
         "epsilon": random.uniform(4, 10),  # Proportion between length & diameter
         "randmarg": random.uniform(2, 4),  # Randomness margin between length & diameter
         "sigma": 5,  # Determines type deviation for Gaussian distributions
         "stochparams": True,  # Whether the generated parameters will also be stochastic
+        "collision_clearance": 2.0,  # Extra radius margin for collision checks
+        "collision_retry_count": DEFAULT_COLLISION_RETRY_COUNT,  # < 0 keeps collision avoidance disabled
+        "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE,  # < 0 keeps voxel overlap rejection disabled
     }
 
     d0 = np.random.normal(d0_mean, d0_std)  # Randomly assign base diameter (no dimension)

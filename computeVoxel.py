@@ -8,6 +8,9 @@ segment (x,y,z) and (x+dx,y+dy,z+dz).
 
 import numpy as np
 from utils import generate_points
+from libGenerator import getProperties
+
+VOXEL_JUNCTION_TOLERANCE_MULTIPLIER = 2.0
 
 def check_boundary(image):
     """
@@ -29,6 +32,160 @@ def check_boundary(image):
     image[..., -1] = 0
 
     return image
+
+def diameter_voxels(x, y, z, idx, r, tVol, res):
+    """
+    Returns the voxel coordinates covered by a circular vessel cross-section.
+
+    Args:
+    x (int): X-coordinate of the centre voxel.
+    y (int): Y-coordinate of the centre voxel.
+    z (int): Z-coordinate of the centre voxel.
+    idx (int): Principal axis index.
+    r (int): Vessel radius in voxels.
+    tVol (tuple): Target volume dimensions.
+    res (tuple): Voxel resolution.
+
+    Returns:
+    set: A set of voxel index tuples covered by the cross-section.
+    """
+    voxels = set()
+
+    t0, t1, t2 = tVol[0], tVol[1], tVol[2]
+    r0, r1, r2 = res[0], res[1], res[2]
+
+    if idx == 0:
+        for i in range(-r, r+1):
+            if (int(y+i) < t1) & (int(y+i) >= 0):
+                for j in range(-r, r+1):
+                    if (int(z+j) < t2) & (int(z+j) >= 0):
+                        if pow(pow(i*r1, 2) + pow(j*r2, 2), 0.5) <= r:
+                            voxels.add((int(x-1), int(y+i-1), int(z+j-1)))
+    elif idx == 1:
+        for i in range(-r, r+1):
+            if (int(x+i) < t0) & (int(x+i) >= 0):
+                for j in range(-r, r+1):
+                    if (int(z+j) < t2) & (int(z+j) >= 0):
+                        if pow(pow(i*r0, 2) + pow(j*r2, 2), 0.5) <= r:
+                            voxels.add((int(x+i-1), int(y-1), int(z+j-1)))
+    else:
+        for i in range(-r, r+1):
+            if (int(x+i) < t0) & (int(x+i) >= 0):
+                for j in range(-r, r+1):
+                    if (int(y+j) < t1) & (int(y+j) >= 0):
+                        if pow(pow(i*r0, 2) + pow(j*r1, 2), 0.5) <= r:
+                            voxels.add((int(x+i-1), int(y+j-1), int(z-1)))
+
+    return {
+        voxel for voxel in voxels
+        if 0 <= voxel[0] < t0 and 0 <= voxel[1] < t1 and 0 <= voxel[2] < t2
+    }
+
+def segment_voxels(x, y, z, dx, dy, dz, diam, tVol=(600,600,700), resolution=(1,1,1)):
+    """
+    Collects the voxel coordinates that a discretized vessel segment would occupy.
+
+    Args:
+    x (float): X-coordinate of the starting point.
+    y (float): Y-coordinate of the starting point.
+    z (float): Z-coordinate of the starting point.
+    dx (float): X-coordinate of the end point.
+    dy (float): Y-coordinate of the end point.
+    dz (float): Z-coordinate of the end point.
+    diam (float): Diameter of the segment.
+    tVol (tuple, optional): Tissue volume. Defaults to (600, 600, 700).
+    resolution (tuple, optional): Voxel resolution. Defaults to (1, 1, 1).
+
+    Returns:
+    set: A set of voxel index tuples covered by the segment.
+    """
+    x = int(x)
+    y = int(y)
+    z = int(z)
+    dx = int(dx) - x
+    dy = int(dy) - y
+    dz = int(dz) - z
+
+    sx = np.sign(dx)
+    sy = np.sign(dy)
+    sz = np.sign(dz)
+
+    ax = abs(dx)
+    ay = abs(dy)
+    az = abs(dz)
+
+    bx = 2 * ax
+    by = 2 * ay
+    bz = 2 * az
+
+    exy = ay - ax
+    exz = az - ax
+    ezy = ay - az
+
+    n = ax + ay + az
+    r = int(np.floor(0.5 * diam))
+    voxels = set()
+
+    while n > 0:
+        if exy < 0:
+            if exz < 0:
+                x += sx
+                exy += by
+                exz += bz
+                if 0 <= x < tVol[0]:
+                    voxels.update(diameter_voxels(x, y, z, 0, r, tVol, resolution))
+            else:
+                z += sz
+                exz -= bx
+                ezy += by
+                if 0 <= z < tVol[2]:
+                    voxels.update(diameter_voxels(x, y, z, 2, r, tVol, resolution))
+        else:
+            if ezy < 0:
+                z += sz
+                exz -= bx
+                ezy += by
+                if 0 <= z < tVol[2]:
+                    voxels.update(diameter_voxels(x, y, z, 2, r, tVol, resolution))
+            else:
+                y += sy
+                exy -= bx
+                ezy -= bz
+                if 0 <= y < tVol[1]:
+                    voxels.update(diameter_voxels(x, y, z, 1, r, tVol, resolution))
+
+        n -= 1
+
+    return voxels
+
+def overlap_outside_junction(segment_voxels_set, occupied_voxels, start_point, diam):
+    """
+    Counts overlapping voxels outside the local junction tolerance region.
+
+    Args:
+    segment_voxels_set (set): Proposed segment voxels.
+    occupied_voxels (set): Previously accepted voxels.
+    start_point (tuple): Segment start point in voxel coordinates.
+    diam (float): Segment diameter.
+
+    Returns:
+    int: Number of overlapping voxels outside the junction tolerance region.
+    """
+    overlap = segment_voxels_set.intersection(occupied_voxels)
+    if len(overlap) == 0:
+        return 0
+
+    tolerance_radius = int(np.floor(0.5 * diam * VOXEL_JUNCTION_TOLERANCE_MULTIPLIER))
+    if tolerance_radius <= 0:
+        return len(overlap)
+
+    start = np.array(start_point, dtype=float)
+    overlap_count = 0
+    for voxel in overlap:
+        if np.linalg.norm(np.array(voxel, dtype=float) - start) > tolerance_radius:
+            overlap_count += 1
+
+    return overlap_count
 
 def transversal(x, y, z, dx, dy, dz, diam, 
                 img_stack=None, tVol=(600,600,700), resolution=(1,1,1)):
@@ -52,64 +209,9 @@ def transversal(x, y, z, dx, dy, dz, diam,
     np.ndarray: Image stack with voxels transversed by the segment.
 
     """
-    # Calculate change in coordinates
-    dx = dx - x
-    dy = dy - y
-    dz = dz - z
-
-    # Calculate sign and absolute value of the change in coordinates
-    sx = np.sign(dx)
-    sy = np.sign(dy)
-    sz = np.sign(dz)
-
-    ax = abs(dx)
-    ay = abs(dy)
-    az = abs(dz)
-
-    bx = 2 * ax
-    by = 2 * ay
-    bz = 2 * az
-
-    exy = ay - ax
-    exz = az - ax
-    ezy = ay - az
-
-    n = ax + ay + az
-
-    # Calculate radius
-    r = int(np.floor(0.5 * diam))
-    mx, my, mz = np.minimum((x + r, y + r, z + r), tVol) - (x, y, z)
-
-    # Find voxels within the tube/vessel
-    while n > 0:
-        if exy < 0:
-            if exz < 0:
-                x += sx
-                exy += by
-                exz += bz
-                if 0 <= x < tVol[0]:
-                    img_stack = diamVoxels(x, y, z, 0, r, img_stack, tVol, res=resolution)
-            else:
-                z += sz
-                exz -= bx
-                ezy += by
-                if 0 <= z < tVol[2]:
-                    img_stack = diamVoxels(x, y, z, 2, r, img_stack, tVol, res=resolution)
-        else:
-            if ezy < 0:
-                z += sz
-                exz -= bx
-                ezy += by
-                if 0 <= z < tVol[2]:
-                    img_stack = diamVoxels(x, y, z, 2, r, img_stack, tVol, res=resolution)
-            else:
-                y += sy
-                exy -= bx
-                ezy -= bz
-                if 0 <= y < tVol[1]:
-                    img_stack = diamVoxels(x, y, z, 1, r, img_stack, tVol, res=resolution)
-
-        n -= 1
+    voxels = segment_voxels(x, y, z, dx, dy, dz, diam, tVol=tVol, resolution=resolution)
+    for voxel in voxels:
+        img_stack[voxel] = 1
 
     return img_stack
 
@@ -244,7 +346,10 @@ def process_network(data,tVol):
     newarray = np.array([])
 
     # Creating an empty 3D array with the given shape
-    img_stack = np.empty(tVol, dtype=int)
+    img_stack = np.zeros(tVol, dtype=int)
+    occupied_voxels = set()
+    properties = getProperties()
+    voxel_overlap_tolerance = properties.get('voxel_overlap_tolerance', -1)
 
     # Loop over columns of data
     for i in range(data.shape[1]):
@@ -266,9 +371,26 @@ def process_network(data,tVol):
                 # Calculate diameter and pass into function to find voxels transversed by
                 # by segment between two points
                 diam = 0.5 * (newarray[3, i] + newarray[3, j])
-                transversal(newarray[0, i], newarray[1, i], newarray[2, i],
-                            newarray[0, j], newarray[1, j], newarray[2, j],
-                            diam, img_stack, tVol)
+                candidate_voxels = segment_voxels(
+                    newarray[0, i], newarray[1, i], newarray[2, i],
+                    newarray[0, j], newarray[1, j], newarray[2, j],
+                    diam, tVol=tVol
+                )
+
+                if voxel_overlap_tolerance >= 0:
+                    overlap_count = overlap_outside_junction(
+                        candidate_voxels,
+                        occupied_voxels,
+                        (int(newarray[0, i]), int(newarray[1, i]), int(newarray[2, i])),
+                        diam,
+                    )
+                    if overlap_count > voxel_overlap_tolerance:
+                        print("Warning: skipping overlapping vessel segment during voxelization")
+                        continue
+
+                for voxel in candidate_voxels:
+                    img_stack[voxel] = 1
+                occupied_voxels.update(candidate_voxels)
 
     # Check boundary violations and return img_stack
     return check_boundary(img_stack)
