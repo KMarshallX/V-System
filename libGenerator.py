@@ -2,8 +2,15 @@ import numpy as np
 import random
 import math
 
-DEFAULT_COLLISION_RETRY_COUNT = 3
-DEFAULT_VOXEL_OVERLAP_TOLERANCE = 0
+DEFAULT_COLLISION_RETRY_COUNT = -1
+DEFAULT_VOXEL_OVERLAP_TOLERANCE = -1
+DEFAULT_TORTUOSITY_ENABLED = True
+DEFAULT_TORTUOSITY_MIN_DEPTH = 2
+DEFAULT_TORTUOSITY_PROB_BASE = 40.0
+DEFAULT_TORTUOSITY_PROB_SLOPE = 5.0
+DEFAULT_TORTUOSITY_ANGLE_BASE = 15.0
+DEFAULT_TORTUOSITY_ANGLE_SLOPE = 2.0
+DEFAULT_TORTUOSITY_ANGLE_CAP = 30.0
 
 default={"k": 3,
           "epsilon": 10 , # Proportion between length & diameter
@@ -12,7 +19,14 @@ default={"k": 3,
           "stochparams": True, # Whether the generated parameters will also be stochastic
           "collision_clearance": 0.0,
           "collision_retry_count": DEFAULT_COLLISION_RETRY_COUNT,
-          "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE}
+          "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE,
+          "tortuosity_enabled": DEFAULT_TORTUOSITY_ENABLED,
+          "tortuosity_min_depth": DEFAULT_TORTUOSITY_MIN_DEPTH,
+          "tortuosity_prob_base": DEFAULT_TORTUOSITY_PROB_BASE,
+          "tortuosity_prob_slope": DEFAULT_TORTUOSITY_PROB_SLOPE,
+          "tortuosity_angle_base": DEFAULT_TORTUOSITY_ANGLE_BASE,
+          "tortuosity_angle_slope": DEFAULT_TORTUOSITY_ANGLE_SLOPE,
+          "tortuosity_angle_cap": DEFAULT_TORTUOSITY_ANGLE_CAP}
 
 active_properties = default.copy()
 
@@ -32,6 +46,9 @@ def setProperties(properties):
 
     global k, epsilon, randmarg, sigma, stochparams
     global collision_clearance, collision_retry_count, voxel_overlap_tolerance
+    global tortuosity_enabled, tortuosity_min_depth, tortuosity_prob_base
+    global tortuosity_prob_slope, tortuosity_angle_base, tortuosity_angle_slope
+    global tortuosity_angle_cap
     global active_properties
 
     active_properties = default.copy()
@@ -45,6 +62,13 @@ def setProperties(properties):
     collision_clearance = active_properties['collision_clearance']
     collision_retry_count = active_properties['collision_retry_count']
     voxel_overlap_tolerance = active_properties['voxel_overlap_tolerance']
+    tortuosity_enabled = active_properties['tortuosity_enabled']
+    tortuosity_min_depth = active_properties['tortuosity_min_depth']
+    tortuosity_prob_base = active_properties['tortuosity_prob_base']
+    tortuosity_prob_slope = active_properties['tortuosity_prob_slope']
+    tortuosity_angle_base = active_properties['tortuosity_angle_base']
+    tortuosity_angle_slope = active_properties['tortuosity_angle_slope']
+    tortuosity_angle_cap = active_properties['tortuosity_angle_cap']
 
 def getProperties():
     """

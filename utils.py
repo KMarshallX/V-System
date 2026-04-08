@@ -155,13 +155,15 @@ def bezier_interpolation(coords=None):
     nodes = np.vstack((X, Y, Z, diam))
 
     # Define the Bezier curve
-    vessel = np.array([])
-    newNodes = np.array([])
+    vessel = np.empty((4, 0), dtype=float)
+    newNodes = np.empty((4, 0), dtype=float)
     for i in range(0,nodes.shape[1]-1):
 
         if np.isnan(nodes[0,i]):
+            if vessel.shape[1] == 0:
+                continue
+
             _, idx = np.unique(vessel, axis=1,return_index=True)
-            last = vessel[:,-1]
             vessel = vessel[:,np.sort(idx)]
 
             # if not np.array_equal(vessel[:,-1], last):
@@ -178,7 +180,7 @@ def bezier_interpolation(coords=None):
                     # points = interpolate_this(theChosenOne)
                     newNodes = generate_points(newNodes,points)
 
-            vessel = np.array([])
+            vessel = np.empty((4, 0), dtype=float)
         else:
             if vessel.size == 0:
                 vessel = nodes[:,i].reshape(-1,1)
@@ -233,7 +235,7 @@ def generate_points(newNodes=None, points=None, usenan=True):
         # if the user wants to insert NaN values between the new points,
         # create a vector of NaN values and append it to the updated nodes
         nanVec = np.empty((4,1))
-        nanVec[:] = np.NaN
+        nanVec[:] = np.nan
         newNodes = np.hstack((newNodes, nanVec))
 
     return newNodes
