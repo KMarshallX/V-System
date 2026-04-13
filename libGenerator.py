@@ -1,74 +1,75 @@
-import numpy as np
-import random
 import math
+import numpy as np
 
-DEFAULT_COLLISION_RETRY_COUNT = -1
-DEFAULT_VOXEL_OVERLAP_TOLERANCE = -1
-DEFAULT_TORTUOSITY_ENABLED = True
-DEFAULT_TORTUOSITY_MIN_DEPTH = 2
-DEFAULT_TORTUOSITY_PROB_BASE = 40.0
-DEFAULT_TORTUOSITY_PROB_SLOPE = 5.0
-DEFAULT_TORTUOSITY_ANGLE_BASE = 15.0
-DEFAULT_TORTUOSITY_ANGLE_SLOPE = 2.0
-DEFAULT_TORTUOSITY_ANGLE_CAP = 30.0
+from vsystem.config import (
+    DEFAULT_COLLISION_RETRY_COUNT,
+    DEFAULT_TORTUOSITY_ANGLE_BASE,
+    DEFAULT_TORTUOSITY_ANGLE_CAP,
+    DEFAULT_TORTUOSITY_ANGLE_SLOPE,
+    DEFAULT_TORTUOSITY_ENABLED,
+    DEFAULT_TORTUOSITY_MIN_DEPTH,
+    DEFAULT_TORTUOSITY_PROB_BASE,
+    DEFAULT_TORTUOSITY_PROB_SLOPE,
+    DEFAULT_VOXEL_OVERLAP_TOLERANCE,
+    VSystemConfig,
+    config_to_properties,
+    resolve_config,
+)
 
-default={"k": 3,
-          "epsilon": 10 , # Proportion between length & diameter
-          "randmarg": 3 , # Randomness margin between length & diameter
-          "sigma": 5, # Determines type deviation for Gaussian distributions
-          "stochparams": True, # Whether the generated parameters will also be stochastic
-          "collision_clearance": 0.0,
-          "collision_retry_count": DEFAULT_COLLISION_RETRY_COUNT,
-          "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE,
-          "tortuosity_enabled": DEFAULT_TORTUOSITY_ENABLED,
-          "tortuosity_min_depth": DEFAULT_TORTUOSITY_MIN_DEPTH,
-          "tortuosity_prob_base": DEFAULT_TORTUOSITY_PROB_BASE,
-          "tortuosity_prob_slope": DEFAULT_TORTUOSITY_PROB_SLOPE,
-          "tortuosity_angle_base": DEFAULT_TORTUOSITY_ANGLE_BASE,
-          "tortuosity_angle_slope": DEFAULT_TORTUOSITY_ANGLE_SLOPE,
-          "tortuosity_angle_cap": DEFAULT_TORTUOSITY_ANGLE_CAP}
+DEFAULT_PROPERTIES = config_to_properties(VSystemConfig())
+active_properties = DEFAULT_PROPERTIES.copy()
 
-active_properties = default.copy()
 
-def setProperties(properties):
+def _sync_module_globals(properties):
     """
-    Sets global property values based on the input dictionary.
+    Mirrors validated properties into module globals for the generation modules.
 
     Args:
-        properties (dict): A dictionary containing the properties and their values.
+        properties (dict): Flattened, validated property dictionary.
 
     Returns:
         None
-
     """
-    if properties == None:
-        properties = default
-
     global k, epsilon, randmarg, sigma, stochparams
     global collision_clearance, collision_retry_count, voxel_overlap_tolerance
     global tortuosity_enabled, tortuosity_min_depth, tortuosity_prob_base
     global tortuosity_prob_slope, tortuosity_angle_base, tortuosity_angle_slope
     global tortuosity_angle_cap
+
+    k = properties["k"]
+    epsilon = properties["epsilon"]
+    randmarg = properties["randmarg"]
+    sigma = properties["sigma"]
+    stochparams = properties["stochparams"]
+    collision_clearance = properties["collision_clearance"]
+    collision_retry_count = properties["collision_retry_count"]
+    voxel_overlap_tolerance = properties["voxel_overlap_tolerance"]
+    tortuosity_enabled = properties["tortuosity_enabled"]
+    tortuosity_min_depth = properties["tortuosity_min_depth"]
+    tortuosity_prob_base = properties["tortuosity_prob_base"]
+    tortuosity_prob_slope = properties["tortuosity_prob_slope"]
+    tortuosity_angle_base = properties["tortuosity_angle_base"]
+    tortuosity_angle_slope = properties["tortuosity_angle_slope"]
+    tortuosity_angle_cap = properties["tortuosity_angle_cap"]
+
+
+def setProperties(properties):
+    """
+    Validates and stores generation properties for the generation modules.
+
+    Args:
+        properties (dict | VSystemConfig | None): Property dictionary or
+            typed config object. `None` restores canonical defaults.
+
+    Returns:
+        None
+    """
     global active_properties
 
-    active_properties = default.copy()
-    active_properties.update(properties)
+    config = resolve_config(properties)
+    active_properties = config_to_properties(config)
+    _sync_module_globals(active_properties)
 
-    k = active_properties['k']
-    epsilon = active_properties['epsilon']
-    randmarg = active_properties['randmarg']
-    sigma = active_properties['sigma']
-    stochparams = active_properties['stochparams']
-    collision_clearance = active_properties['collision_clearance']
-    collision_retry_count = active_properties['collision_retry_count']
-    voxel_overlap_tolerance = active_properties['voxel_overlap_tolerance']
-    tortuosity_enabled = active_properties['tortuosity_enabled']
-    tortuosity_min_depth = active_properties['tortuosity_min_depth']
-    tortuosity_prob_base = active_properties['tortuosity_prob_base']
-    tortuosity_prob_slope = active_properties['tortuosity_prob_slope']
-    tortuosity_angle_base = active_properties['tortuosity_angle_base']
-    tortuosity_angle_slope = active_properties['tortuosity_angle_slope']
-    tortuosity_angle_cap = active_properties['tortuosity_angle_cap']
 
 def getProperties():
     """
@@ -76,61 +77,58 @@ def getProperties():
 
     Returns:
         dict: The currently active property dictionary.
-
     """
     return active_properties.copy()
 
-def calParam(text, params):
-    '''
-    Calculates the value within the parentheses before analyzing the text. For example, f('co / 4'), f requires 
-    the value of 'co'. 
-    
-    Args:
-    text (str): A string containing the mathematical expression to be evaluated
-    params (dict): A dictionary containing parameter names (as keys) and their values (as values)
-    
-    Returns:
-    str: A string representation of the evaluated expression 
-    '''
 
+def calParam(text, params):
+    """
+    Calculates the value within the parentheses before analyzing the text.
+
+    Args:
+        text (str): Mathematical expression to evaluate.
+        params (dict): Parameter values used to resolve symbolic names.
+
+    Returns:
+        str: String representation of the evaluated expression.
+    """
     txt = text[:]
-    for i in params: txt = txt.replace(i, str(params[i]))
-        
-    return str(params['co'] / eval(txt))
+    for key in params:
+        txt = txt.replace(key, str(params[key]))
+
+    return str(params["co"] / eval(txt))
+
 
 def calBifurcation(d0):
-    '''
-    Calculates the diameters and angles of bifurcation given an input diameter
-    
-    Args:
-    d0 (float): input diameter
-    
-    Returns:
-    resp (dict): a dictionary containing the calculated values for d1, d2, d0, th1, th2, and co
-    '''
+    """
+    Calculates daughter branch diameters and bifurcation angles.
 
+    Args:
+        d0 (float): Input parent diameter.
+
+    Returns:
+        dict: Bifurcation parameters for the current recursion step.
+    """
     resp = {}
 
     dOpti = d0 / 2 ** (1.0 / k)
-    if stochparams: d1 = abs(np.random.normal(dOpti, dOpti / sigma))
-    else: d1 = dOpti # Optimal diameter
+    if stochparams:
+        d1 = abs(np.random.normal(dOpti, dOpti / sigma))
+    else:
+        d1 = dOpti
 
-    if d1 >= d0: d1 = dOpti # Elimate possibility of d1 being greater than d0
+    if d1 >= d0:
+        d1 = dOpti
 
-    d2 = (d0 ** k - d1 ** k) ** (1.0 / k) # Calculate second diameter
-    # alpha = abs(np.random.uniform(1., 0.25)) * (d2 / d1) # Rate of symmetry of daughters (=1 symmetrical ?)
+    d2 = (d0 ** k - d1 ** k) ** (1.0 / k)
     alpha = d2 / d1
 
-    '''
-    Equations which mimic bifurcation angles in the human body
-    Liu et al. (2010) and Zamir et al. (1988)
-    '''
     xtmp = (1 + alpha * alpha * alpha) ** (4.0 / 3) + 1 - alpha ** 4
-    xtmpb = 2 * ((1 + alpha * alpha * alpha ) ** (2.0 / 3))
+    xtmpb = 2 * ((1 + alpha * alpha * alpha) ** (2.0 / 3))
     a1 = math.acos(xtmp / xtmpb)
 
     xtmp = (1 + alpha * alpha * alpha) ** (4.0 / 3) + (alpha ** 4) - 1
-    xtmpb = 2 * alpha * alpha * ((1 + alpha * alpha * alpha) ** (2.0/3))
+    xtmpb = 2 * alpha * alpha * ((1 + alpha * alpha * alpha) ** (2.0 / 3))
     a2 = math.acos(xtmp / xtmpb)
 
     resp["d1"] = d1
@@ -142,16 +140,19 @@ def calBifurcation(d0):
 
     return resp
 
+
 def getLength(d0):
     """
-    Returns the length of the branch based on the diameter of the parent branch.
+    Returns the branch length based on the current diameter.
 
-    Parameters:
-    d0 (float): The diameter of the parent branch.
+    Args:
+        d0 (float): Parent diameter.
 
     Returns:
-    float: The length of the branch.
+        float: Branch length.
     """
     c0 = d0 * epsilon
-    # abs(np.random.normal(50,10))
     return np.random.uniform(c0 - randmarg, c0 + randmarg)
+
+
+setProperties(None)

@@ -1,62 +1,136 @@
-# 🌿 V-System: Vascular Lindenmayer Systems for Synthetic Vessel Generation
+# V-System
 
-**V-System** is a Python-based framework for generating **synthetic 3D vascular networks** using **Lindenmayer Systems (L-Systems)** — a type of formal grammar traditionally used in plant modelling.
+V-System is a Python toolkit for generating synthetic 3D vascular trees with a stochastic Lindenmayer-system pipeline. It produces branching vessel grammars, converts them into 3D centerline coordinates, and voxelizes the result into binary mask volumes that can be used for simulation, benchmarking, and synthetic data generation.
 
-This implementation builds upon and extends the work by  
-📖 [Galarreta-Valverde et al. (SPIE, 2013)](https://www.spiedigitallibrary.org/conference-proceedings-of-spie/8669/86691I/Three-dimensional-synthetic-blood-vessel-generation-using-stochastic-L-systems/10.1117/12.2007532.full?SSO=1),  
-who introduced stochastic rules and biological realism into traditional L-Systems for vessel modelling.
+This repository refactored [original V-System work](https://github.com/psweens/V-System)
+![Example generation](./Lnet_Generations.jpg)
 
----
+## Installation
 
-## 🧠 System Overview
-
-V-System simulates vessel formation through three stages:
-
-1. **Grammar Generation**: Build a rule-based string using iterative stochastic L-System rules.
-2. **Geometry Construction**: Convert the string into 3D coordinates for branching and direction.
-3. **Voxelization**: Perform voxel traversal to create a 3D binary mask (volumetric image).
-
-![Example](https://github.com/psweens/V-System/blob/master/Lnet_Generations.jpg)
-
----
-
-## 📦 Installation
-
-V-System runs on Python 3.9 and has been tested on:
-- Ubuntu 18.04 LTS
-- macOS Big Sur  
-It should also work on most Linux and Windows systems.
-
-Clone the repository:
+Install dependencies:
 
 ```bash
-git clone https://github.com/psweens/V-System.git
+pip install -r REQUIREMENTS.txt
 ```
 
-Install required packages:
+If you only want the core runtime used by the generation pipeline, the main Python dependencies are `numpy`, `nibabel`, and `scikit-image`. Some optional utilities in the repository may require additional packages listed in `REQUIREMENTS.txt`.
+
+## CLI Usage
+
+The command line entrypoint is [`main.py`](./main.py). By default it generates a batch of NIfTI vessel masks in `./output_syn/`.
+
+Basic usage:
 
 ```bash
-pip install scikit-image opencv-python bezier matplotlib itk
+python main.py
 ```
 
-Or use the full requirements file:
+Generate a smaller deterministic batch:
 
-📄 [`REQUIREMENTS.txt`](https://github.com/psweens/V-System/blob/master/REQUIREMENTS.txt)
+```bash
+python main.py --count 2 --min-iter 4 --max-iter 5 --seed 7 --outpath ./output_syn/
+```
 
----
+Set a custom output volume:
 
-## 🔬 Applications
+```bash
+python main.py --tissue-volume 256 256 128
+```
 
-- Generating realistic 3D vascular structures for simulation.
-- Training datasets for segmentation algorithms (e.g. VAN-GAN).
-- Creating synthetic benchmarks for vascular imaging pipelines.
-- Testing robustness of deep learning models under anatomical variability.
+Available options:
 
----
+- `--count`: number of networks to generate
+- `--min-iter`: minimum grammar recursion depth
+- `--max-iter`: maximum grammar recursion depth
+- `--d0-mean`: mean root diameter
+- `--d0-std`: root diameter standard deviation
+- `--tissue-volume X Y Z`: output volume size
+- `--outpath`: output directory
+- `--seed`: optional deterministic base seed
+- `--save-intermediates`: keep intermediates in memory during CLI generation
 
-## 📖 Citation
+## Python API
 
-Please cite the following if you use V-System in your research:
+The cleaned public API lives under [`vsystem/`](./vsystem).
+
+Basic example:
+
+```python
+from vsystem import VSystemConfig, generate_network
+
+config = VSystemConfig()
+result = generate_network(config=config, n_iter=4, d0=18.0)
+
+print(result.volume.shape)
+print(result.turtle_program[:80])
+```
+
+You can also override selected namespaces with a plain mapping:
+
+```python
+from vsystem import generate_network
+
+result = generate_network(
+    config={
+        "output": {"tissue_volume": (128, 128, 96)},
+        "reproducibility": {"seed": 42},
+    },
+    n_iter=3,
+    d0=14.0,
+)
+```
+
+## Output Structure
+
+`generate_network(...)` returns a [`GenerationResult`](./vsystem/result.py) object with:
+
+- `volume`: voxelized binary mask as a NumPy array
+- `turtle_program`: generated grammar string
+- `coordinates`: turtle states before interpolation
+- `interpolated`: interpolated centerline array used for voxelization
+- `config`: resolved `VSystemConfig`
+- `seed`: applied seed, if any
+- `warnings`: non-fatal warnings container
+- `runtime_stats`: simple runtime and size statistics
+- `metadata`: pipeline metadata
+
+CLI runs save output volumes as:
+
+```text
+output_syn/
+  Lnet_i<iterations>_<index>.nii.gz
+```
+
+If tortuosity is enabled in the active config, the filename suffix becomes `_tort.nii.gz`.
+
+## Repository Structure
+
+```text
+V-System/
+  main.py                  CLI entrypoint
+  vSystem.py               grammar generation rules
+  analyseGrammar.py        turtle interpretation and geometry checks
+  computeVoxel.py          voxel traversal and mask creation
+  libGenerator.py          shared parameter state for core modules
+  utils.py                 geometry and interpolation helpers
+  visuals.py               optional plotting utilities
+  vsystem/
+    __init__.py            public API exports
+    config.py              typed config models and validation
+    pipeline.py            library orchestration entrypoints
+    result.py              structured result model
+  tests/                   regression and feature tests
+  README.md
+  REQUIREMENTS.txt
+```
+
+## Notes
+
+- The runtime pipeline order is unchanged: `vSystem.py -> analyseGrammar.py -> computeVoxel.py`.
+- The refactor makes the project import-safe and library-first without rewriting the underlying generation algorithm.
+- `libGenerator.py` remains because the grammar and turtle modules still share active generation parameters through it.
+
+## Citation
 
 **Version 1.0**  
 > [Quantification of vascular networks in photoacoustic mesoscopy](https://www.sciencedirect.com/science/article/pii/S221359792200026X)  
@@ -65,18 +139,3 @@ Please cite the following if you use V-System in your research:
 **Version 2.0**  
 > [Unsupervised Segmentation of 3D Microvascular Photoacoustic Images Using Deep Generative Learning](https://doi.org/10.1002/advs.202402195)  
 > Paul W. Sweeney et al., *Advanced Science*, 2024
-
----
-
-## 🙏 Acknowledgements
-
-This project builds upon foundational work by  
-🎓 Miguel A. Galarreta-Valverde – [PhD Thesis (USP)](https://teses.usp.br/teses/disponiveis/45/45134/tde-30112012-172822/pt-br.php)
-
----
-
-## 📬 Contact
-
-For bugs, ideas, or contributions — feel free to open an issue or reach out through the [GitHub repository](https://github.com/psweens/V-System).
-
----

@@ -1,85 +1,110 @@
-import random
+import argparse
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
-from skimage import io
-from preprocessing import resize_stacks, resize_volume
-from libGenerator import (
-    setProperties,
-    DEFAULT_COLLISION_RETRY_COUNT,
-    DEFAULT_VOXEL_OVERLAP_TOLERANCE,
-    DEFAULT_TORTUOSITY_ENABLED,
-    DEFAULT_TORTUOSITY_MIN_DEPTH,
-    DEFAULT_TORTUOSITY_PROB_BASE,
-    DEFAULT_TORTUOSITY_PROB_SLOPE,
-    DEFAULT_TORTUOSITY_ANGLE_BASE,
-    DEFAULT_TORTUOSITY_ANGLE_SLOPE,
-    DEFAULT_TORTUOSITY_ANGLE_CAP,
-)
-from vSystem import F, I, R, B
-from analyseGrammar import branching_turtle_to_coords
-from visuals import plot_coords, print_coords
-from computeVoxel import process_network
-from utils import bezier_interpolation
 
-# Default Parameters
-n = 6  # No. of networks to be created
-d0_mean = 20.0  # Diameter of base of tree
-d0_std = 10.0  # Standard deviation of base diameter
-tissue_volume = (250, 250, 150)  # Specify number of pixels in the tissue volume
-outpath = "./output_syn/"  # Output path
-iterations = np.linspace(2, 12, n).astype(int)  # Number of iterations for each network 
+from vsystem import VSystemConfig, generate_network, resolve_config
 
-for file in range(n):
-    # Lindenmayer System Parameters
-    properties = {
-        "k": 3, 
-        "epsilon": random.uniform(4, 10),  # Proportion between length & diameter
-        "randmarg": random.uniform(2, 4),  # Randomness margin between length & diameter
-        "sigma": 5,  # Determines type deviation for Gaussian distributions
-        "stochparams": True,  # Whether the generated parameters will also be stochastic
-        "collision_clearance": 2.0,  # Extra radius margin for collision checks
-        "collision_retry_count": DEFAULT_COLLISION_RETRY_COUNT,  # < 0 keeps collision avoidance disabled
-        "voxel_overlap_tolerance": DEFAULT_VOXEL_OVERLAP_TOLERANCE,  # < 0 keeps voxel overlap rejection disabled
-        "tortuosity_enabled": DEFAULT_TORTUOSITY_ENABLED,
-        "tortuosity_min_depth": DEFAULT_TORTUOSITY_MIN_DEPTH,
-        "tortuosity_prob_base": DEFAULT_TORTUOSITY_PROB_BASE,
-        "tortuosity_prob_slope": DEFAULT_TORTUOSITY_PROB_SLOPE,
-        "tortuosity_angle_base": DEFAULT_TORTUOSITY_ANGLE_BASE,
-        "tortuosity_angle_slope": DEFAULT_TORTUOSITY_ANGLE_SLOPE,
-        "tortuosity_angle_cap": DEFAULT_TORTUOSITY_ANGLE_CAP,
-    }
 
-    d0 = np.random.normal(d0_mean, d0_std)  # Randomly assign base diameter (no dimension)
-    # niter = random.randint(6, 14)  # Randomly assign number of V-System recursive loops
-    niter = iterations[file]
-    setProperties(properties)  # Setting V-Sytem properties
-    print(f"Creating image ... {file} with {niter} iterations")
+def build_parser():
+    """
+    Builds the command line interface for batch generation.
 
-    # Run V-System grammar for n iterations
-    turtle_program = F(niter, d0)
+    Returns:
+        argparse.ArgumentParser: Configured CLI parser.
+    """
+    parser = argparse.ArgumentParser(description="Generate synthetic vascular volumes with V-System.")
+    parser.add_argument("--count", type=int, default=6, help="Number of networks to generate.")
+    parser.add_argument("--min-iter", type=int, default=2, help="Minimum grammar iterations.")
+    parser.add_argument("--max-iter", type=int, default=12, help="Maximum grammar iterations.")
+    parser.add_argument("--d0-mean", type=float, default=25.0, help="Mean root vessel diameter.")
+    parser.add_argument("--d0-std", type=float, default=10.0, help="Root vessel diameter standard deviation.")
+    parser.add_argument(
+        "--tissue-volume",
+        type=int,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=(500, 500, 150),
+        help="Output volume dimensions.",
+    )
+    parser.add_argument("--outpath", default="./output_syn/", help="Directory for generated NIfTI volumes.")
+    parser.add_argument("--seed", type=int, default=None, help="Optional base random seed.")
+    parser.add_argument("--save-intermediates", action="store_true", help="Keep intermediates in the returned result.")
+    return parser
 
-    # Convert grammar into coordinates
-    coords = branching_turtle_to_coords(turtle_program, d0)
 
-    # Analyse / sort coordinate data
-    update = bezier_interpolation(coords)
+def build_default_config():
+    """
+    Builds the canonical default config for CLI execution.
 
-    # If you fancy, plot a 2D image of the network!
-    # plot_coords(newdata, array=True, bare_plot=False) # bare_plot removes the axis labels
+    Returns:
+        VSystemConfig: Default generation config.
+    """
+    return VSystemConfig()
 
-    # Run 3D voxel traversal to generate binary mask of V-System network
-    image = process_network(update, tVol=tissue_volume).astype("int8")
 
-    # Save image volume as nifti file
-    if not DEFAULT_TORTUOSITY_ENABLED:
-        nib.save(nib.Nifti1Image(image, affine=np.eye(4)), outpath + f"Lnet_i{niter}_{file}.nii.gz")
-    else:
-        nib.save(nib.Nifti1Image(image, affine=np.eye(4)), outpath + f"Lnet_i{niter}_{file}_tort.nii.gz")
-    
-    
-    
-    # io.imsave(
-    #     outpath + "Lnet_i{}_{}.tiff".format(niter, file),
-    #     np.transpose(image, (2, 0, 1)),
-    #     bigtiff=False,
-    # )
+def save_volume(result, output_path):
+    """
+    Saves a generated mask as a NIfTI file.
+
+    Args:
+        result: Generation result object.
+        output_path (Path): Destination file path.
+
+    Returns:
+        None
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(nib.Nifti1Image(result.volume, affine=np.eye(4)), str(output_path))
+
+
+def run_cli(args=None):
+    """
+    Runs the command line batch generator.
+
+    Args:
+        args (list[str] | None): Optional argument vector.
+
+    Returns:
+        None
+    """
+    parser = build_parser()
+    parsed = parser.parse_args(args=args)
+
+    iterations = np.linspace(parsed.min_iter, parsed.max_iter, parsed.count).astype(int)
+    base_seed = parsed.seed
+    config = build_default_config()
+
+    for index, n_iter in enumerate(iterations):
+        run_seed = None if base_seed is None else base_seed + index
+        if run_seed is not None:
+            np.random.seed(run_seed)
+        d0 = np.random.normal(parsed.d0_mean, parsed.d0_std)
+
+        result = generate_network(
+            config=resolve_config({
+                "generation": config.generation.__dict__,
+                "collision": config.collision.__dict__,
+                "tortuosity": config.tortuosity.__dict__,
+                "output": {
+                    "tissue_volume": tuple(parsed.tissue_volume),
+                    "outpath": parsed.outpath,
+                    "save_nifti": True,
+                    "image_dtype": "int8",
+                },
+                "reproducibility": {"seed": run_seed},
+            }),
+            n_iter=int(n_iter),
+            d0=float(d0),
+            return_intermediates=parsed.save_intermediates,
+        )
+
+        suffix = "_tort" if result.config.tortuosity.enabled else ""
+        output_path = Path(parsed.outpath) / f"Lnet_i{int(n_iter)}_{index}{suffix}.nii.gz"
+        print(f"Creating image ... {index} with {int(n_iter)} iterations")
+        save_volume(result, output_path)
+
+
+if __name__ == "__main__":
+    run_cli()

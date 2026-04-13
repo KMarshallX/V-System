@@ -337,12 +337,12 @@ def process_network(data,tVol):
     between two points after checking for boundary violations
     """
 
-    if data.size == 0 or data.ndim != 2 or data.shape[0] < 4:
-        print("Warning: empty or malformed network data; returning blank volume")
+    if data.ndim == 2 and data.shape[0] >= 4 and data.shape[1] == 0:
+        print("Warning: empty network data; returning blank volume")
         return np.zeros(tVol, dtype=int)
 
-    if data.shape[1] == 0:
-        print("Warning: empty network data; returning blank volume")
+    if data.size == 0 or data.ndim != 2 or data.shape[0] < 4:
+        print("Warning: empty or malformed network data; returning blank volume")
         return np.zeros(tVol, dtype=int)
 
     if not np.any(~np.isnan(data[0, :])):
