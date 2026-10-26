@@ -5,3 +5,8 @@ __pycache__/
 build/
 dist/
 output/
+
+# local agents files
+AGENTS.md
+ENDPOINTS.md
+PLAN.md
