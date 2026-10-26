@@ -1122,6 +1122,9 @@ def build_parser(family="tree"):
     parser.add_argument("--no-connect", action="store_false", dest="connect",
                         help="rasterise bare capsules, so that a vessel thinner than a voxel "
                              "renders as a dotted line rather than a one-voxel path")
+    parser.add_argument("--nifti", action="store_true",
+                        help="also save a NIfTI mask and uncentred/centred 26-connected references; "
+                             "needs --fit voxel_size, physical units and the nifti extra")
     parser.add_argument("--subdivisions", type=int, default=3,
                         help="B-spline sampling depth for stems, 2^i points per span (default 3); "
                              "also the number of walk steps per stem sub-segment")
@@ -1327,6 +1330,12 @@ def main(argv=None):
         raise SystemExit(f"--family {chosen.family} is not available: the preset is listed but this "
                          "version does not offer it; see the README")
     args = build_parser(chosen.family).parse_args(argv)
+    if args.nifti:
+        from reference import check_destinations, check_options, export_nifti
+        try:
+            check_options(args.fit, args.voxel_size, args.units)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     if args.fit == "voxel_size" and args.voxel_size is None:
         raise SystemExit("--fit voxel_size requires --voxel-size")
     if args.d_min is not None and args.d_min <= 0:
@@ -1344,6 +1353,12 @@ def main(argv=None):
         random.seed(seed)
         np.random.seed(seed % (2 ** 32))
         properties, d0, niter = sample_parameters(args)
+        stem = f"Lnet_i{niter}_s{seed}"
+        if args.nifti:
+            try:
+                check_destinations(args.out, stem)
+            except OSError as error:
+                raise SystemExit(str(error)) from error
         if args.d_min is not None and d0 < args.d_min:
             raise SystemExit(
                 f"--d-min {args.d_min:g} exceeds the root diameter {d0:.3g} sampled for seed "
@@ -1364,7 +1379,6 @@ def main(argv=None):
         nodes = grown["nodes"]
         volume = process_network(nodes, tVol, fit=args.fit, voxel_size=args.voxel_size,
                                  clip_axes=grown["clip_axes"], connect=args.connect)
-        stem = f"Lnet_i{niter}_s{seed}"
         write_volume(os.path.join(args.out, stem + ".tiff"), volume)
         streams = {name: [seed, tag] for name, tag in RNG_STREAMS.items()}
         if shaping["bed"] is not None:
@@ -1401,11 +1415,22 @@ def main(argv=None):
         record["rungs"] = len(grown["rungs"])
         if "feeder_trees" in grown:
             record["feeder_trees"] = grown["feeder_trees"]
+        export_error = None
+        if args.nifti:
+            try:
+                record["nifti_reference"] = export_nifti(
+                    args.out, stem, nodes, grown["edges"], volume, args.voxel_size, args.units)
+            except (ValueError, OSError, RuntimeError, AssertionError, MemoryError) as error:
+                export_error = str(error) or type(error).__name__
+                record["nifti_reference"] = {"status": "failed", "reason": export_error}
         with open(os.path.join(args.out, stem + ".json"), "w") as handle:
             json.dump(record, handle, indent=2)
         save_network(os.path.join(args.out, stem + ".npz"), nodes, program=grown["program"],
                      metadata=record, edges=grown["edges"], node_kind=grown["node_kind"],
                      tree=grown["tree"])
+        if export_error is not None:
+            print(f"{stem}: NIfTI export failed: {export_error}. TIFF/NPZ/JSON retained.", file=sys.stderr)
+            return 1
         if not volume.any():
             print(f"{stem}.tiff: warning: no vessel voxels; the network is outside the volume or "
                   f"below its resolution", file=sys.stderr)

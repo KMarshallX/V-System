@@ -5,8 +5,14 @@ __pycache__/
 build/
 dist/
 output/
+output_syn/
+
+# Generated reference test instances (test code remains tracked).
+tests/*
+tests/reference_output/
 
 # local agents files
 AGENTS.md
 ENDPOINTS.md
 PLAN.md
+LOG.md
