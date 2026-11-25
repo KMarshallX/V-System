@@ -168,7 +168,7 @@ class RegistryTests(unittest.TestCase):
     def test_a_bed_run_records_its_stream_beside_the_registered_ones(self):
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()):
-                status = main.main(["--count", "1", "--seed", "5", "--volume", "48", "48", "48", "--fit", "voxel_size",
+                status = main.main(["--original_export"] + ["--count", "1", "--seed", "5", "--volume", "48", "48", "48", "--fit", "voxel_size",
                                     "--voxel-size", "1", "--d0", "8", "0", "--iterations", "3", "3", "--d-min", "1",
                                     "--grow-in-volume", "--bed", "{}", "--out", out])
             self.assertEqual(status, 0)

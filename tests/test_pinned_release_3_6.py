@@ -644,10 +644,12 @@ CLI_CASES = (("cli_tree", ["--count", "1", "--seed", "7", "--volume", "48", "48"
              # and a family 3.6 added
              ("cli_aligned_tight", ["--family", "aligned_tight", "--d-min", "2", "--count", "1", "--seed", "9",
                                     "--volume", "48", "48", "24", "--iterations", "6", "6"]))
+# the current command line needs --original_export for the TIFF outputs; an old release has no such flag
+ORIGINAL = ["--original_export"] if any(a.dest == "original_export" for a in main.build_parser()._actions) else []
 for name, argv in CLI_CASES:
     directory = os.path.join(out_dir, name)
     with contextlib.redirect_stdout(io.StringIO()):
-        status = main.main(argv + ["--out", directory])
+        status = main.main(ORIGINAL + argv + ["--out", directory])
     written = sorted(os.listdir(directory))
     hashes[name] = {"status": status, "files": written}
     facts[name], extras[name] = {}, {}

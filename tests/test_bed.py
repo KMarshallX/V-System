@@ -913,7 +913,7 @@ class CommandLineTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             try:
-                return main.main(argv), None, out.getvalue()
+                return main.main(["--original_export"] + argv), None, out.getvalue()
             except SystemExit as caught:
                 return None, caught, out.getvalue()
 

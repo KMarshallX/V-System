@@ -868,7 +868,7 @@ class AntialiasBenchmark(unittest.TestCase):
             report["curved"][str(d)] = row
         with tempfile.TemporaryDirectory() as out:
             for family in ("foam", "capillary_bed"):
-                subprocess.run([sys.executable, os.path.join(ROOT, "main.py"), "--count", "1", "--family", family,
+                subprocess.run([sys.executable, os.path.join(ROOT, "main.py"), "--original_export", "--count", "1", "--family", family,
                                 "--d-min", "4", "--fit", "voxel_size", "--voxel-size", "2", "--volume", "256", "256",
                                 "256", "--seed", "1", "--out", os.path.join(out, family)],
                                check=True, capture_output=True)

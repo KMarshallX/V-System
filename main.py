@@ -49,7 +49,7 @@ import libGenerator
 from analyseGrammar import WalkSettings, branching_turtle_to_coords
 from anastomosis import BRIDGE, BRIDGE_PERSISTENCE, EVENT_KEYS as ANASTOMOSIS_EVENTS, anastomose as bridge_tips
 from collisions import CollisionAvoider
-from computeVoxel import AXES, FITS, process_network
+from computeVoxel import AXES, FITS, fit_to_volume, process_network
 from guidance import EVENT_KEYS as GUIDANCE_EVENTS, Guidance, _is_number as _finite_number, unguided_frame
 from spatial import make_index
 from utils import interpolate_segments
@@ -64,6 +64,25 @@ from vSystem import F, _check_fill as check_fill
 # physical voxel size. Recorded in every sidecar so a rescaled dataset declares
 # itself rather than being mistaken for the default.
 DEFAULT_UNITS = "um"
+
+# The default export mode renders at this voxel size (grammar units, micrometres under
+# DEFAULT_UNITS) unless --voxel-size is given; --original_export keeps the isotropic fit.
+EXPORT_VOXEL_SIZE = 50.0
+CONSTRUCTIONS = ("tree", "straight_tube", "straight_y", "walk_program")
+# The export mode's defaults for options neither given nor set by a --family preset: the
+# tree scheme of the vsystem_laplacian_50um_v1 fixtures, in micrometres (applied only under
+# --units um). --original_export keeps the parser's own defaults.
+EXPORT_DEFAULTS = {
+    "d0": (350.0, 100.0), "d_min": 50.0, "iterations": (4, 7), "epsilon": (6.0, 6.0), "randmarg": (0.15, 0.15),
+    "aneurysm_prob": 0.0, "stenosis_prob": 0.0, "subdivisions": 4, "tortuosity": "walk", "persistence": 8.0,
+    "avoid_collisions": True, "collision_margin": 100.0, "collision_attempts": 20, "collision_index": "grid",
+    "candidates": 8,
+}
+# options that only the export mode reads, refused with --original_export
+EXPORT_ONLY = ("construction", "direction", "lengths", "moves", "daughter_diameter", "thin_daughters",
+               "thin_diameter", "thin_protrusion", "thin_host_min", "companion", "companion_diameter",
+               "companion_clearance", "keep_bridges", "write_unbridged", "candidates", "require_branches",
+               "require_cycles", "prune_stubs", "manifest", "fixture")
 
 # Version of the archive layout. 1 held nodes, program and metadata; 2 adds the
 # edges, node_kind and tree arrays. A reader of version 1 ignores the additions.
@@ -1122,9 +1141,11 @@ def build_parser(family="tree"):
     parser.add_argument("--no-connect", action="store_false", dest="connect",
                         help="rasterise bare capsules, so that a vessel thinner than a voxel "
                              "renders as a dotted line rather than a one-voxel path")
-    parser.add_argument("--nifti", action="store_true",
-                        help="also save a NIfTI mask and uncentred/centred 26-connected references; "
-                             "needs --fit voxel_size, physical units and the nifti extra")
+    parser.add_argument("--original_export", "--original-export", action="store_true", dest="original_export",
+                        help="write the original outputs, a binary TIFF + NPZ archive + JSON sidecar per network, "
+                             "with the original defaults (isotropic fit, z clipped, 512 512 140 volume). Without "
+                             "it, main.py writes a NIfTI vessel mask, 26-connected and centred 26-connected "
+                             "references, a GraphML reference graph and the JSON sidecar at a fixed voxel size")
     parser.add_argument("--subdivisions", type=int, default=3,
                         help="B-spline sampling depth for stems, 2^i points per span (default 3); "
                              "also the number of walk steps per stem sub-segment")
@@ -1222,10 +1243,84 @@ def build_parser(family="tree"):
                             "density, jitter, step for kind foam; bed.FIBRE_SETTING_KEYS for kind fibre, whose "
                             "layout sheets grows its own feeder sheets; see bed.py); needs --grow-in-volume and "
                             "--d-min; null turns a preset's bed off (default: none)")
+    export = parser.add_argument_group(
+        "reference export", "used by the default export mode only (not with --original_export). It renders at "
+                            f"--voxel-size (default {EXPORT_VOXEL_SIZE:g}) with --fit voxel_size and no clipping, "
+                            "on a volume sized to the network plus a 4-voxel border unless --volume is given, "
+                            "and writes <stem>_vessel_mask.nii.gz, <stem>_reference_26_con.nii.gz, "
+                            "<stem>_reference_26_con_centered.nii.gz, <stem>_reference_graph.graphml and "
+                            "<stem>.json. Unless given (or set by --family), it uses the v1 fixture tree scheme: "
+                            "--d0 350 100 --d-min 50 --iterations 4 7 --epsilon 6 6 --randmarg 0.15 0.15 "
+                            "--aneurysm-prob 0 --stenosis-prob 0 --subdivisions 4 --tortuosity walk --persistence 8 "
+                            "--avoid-collisions --collision-margin 100 --collision-attempts 20 --collision-index "
+                            "grid --candidates 8. Lengths and diameters below are in micrometres (--units um)")
+    export.add_argument("--no-prune-stubs", action="store_false", dest="prune_stubs",
+                        help="keep buried collision stubs: terminal branches whose tip lies less than 100 um "
+                             "outside every other tube (pruned by default; the references usually fail on them)")
+    export.add_argument("--construction", choices=CONSTRUCTIONS, default="tree",
+                        help="tree: the grammar (default); straight_tube, straight_y: explicit straight "
+                             "polylines; walk_program: one walked stem, or a walked Y with --daughter-diameter. "
+                             "The root diameter is the --d0 draw")
+    export.add_argument("--direction", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
+                        help="root direction of a straight or walk_program construction "
+                             "(default: that construction's v1 fixture direction)")
+    export.add_argument("--lengths", type=float, nargs="+", default=None, metavar="UM",
+                        help="lengths of a straight or walk_program construction: one for a single stem, three "
+                             "(root, daughter 1, daughter 2) for a Y (default: the v1 fixture lengths)")
+    export.add_argument("--moves", type=int, nargs="+", default=None, metavar="N",
+                        help="walk moves per stem of a walk_program construction, one per length "
+                             "(default: the v1 fixture moves)")
+    export.add_argument("--daughter-diameter", type=float, default=None, metavar="UM",
+                        help="first daughter diameter of a straight_y or walked Y; the second follows Murray's "
+                             "law with --k. A walk_program with it is a Y, without it a single stem")
+    export.add_argument("--thin-daughters", type=int, default=0, metavar="N",
+                        help="add N controlled thin, short terminal side daughters on thick stems (default 0)")
+    export.add_argument("--thin-diameter", type=float, nargs=2, default=(50.0, 70.0), metavar=("MIN", "MAX"),
+                        help="thin daughter diameter range (default 50 70)")
+    export.add_argument("--thin-protrusion", type=float, nargs=2, default=(150.0, 300.0), metavar=("MIN", "MAX"),
+                        help="thin daughter length beyond the host surface (default 150 300)")
+    export.add_argument("--thin-host-min", type=float, default=300.0, metavar="UM",
+                        help="smallest host stem diameter for a thin daughter (default 300)")
+    export.add_argument("--companion", action="store_true",
+                        help="add one side branch routed alongside a nonincident branch at a controlled "
+                             "close approach")
+    export.add_argument("--companion-diameter", type=float, nargs=2, default=(100.0, 150.0), metavar=("MIN", "MAX"),
+                        help="companion diameter range (default 100 150)")
+    export.add_argument("--companion-clearance", type=float, default=125.0, metavar="UM",
+                        help="designed surface clearance between the companion and its target (default 125)")
+    export.add_argument("--keep-bridges", type=int, nargs=2, default=None, metavar=("MIN", "MAX"),
+                        help="grow the tree, run the anastomosis on it (the --anastomosis-* options, mode any) "
+                             "and keep a seeded subset of MIN to MAX bridges whose loop opening is at least "
+                             "150 um; a candidate with fewer eligible bridges is rejected")
+    export.add_argument("--write-unbridged", action="store_true",
+                        help="with --keep-bridges, also export the tree before its bridges on the same grid, "
+                             "as <stem>_unbridged_*")
+    export.add_argument("--candidates", type=int, default=1, metavar="N",
+                        help="tries per network: candidate i uses seed + 1000 i, and the first whose "
+                             "construction succeeds, whose branch and cycle counts lie in --require-branches "
+                             "and --require-cycles and whose references pass their checks is written (default 1)")
+    export.add_argument("--require-branches", type=int, nargs=2, default=None, metavar=("MIN", "MAX"),
+                        help="accepted range of graph branches (default: any)")
+    export.add_argument("--require-cycles", type=int, nargs=2, default=None, metavar=("MIN", "MAX"),
+                        help="accepted range of independent cycles (default: any)")
+    export.add_argument("--manifest", default=None, metavar="PATH",
+                        help="fixture manifest for --fixture (default presets/fixtures/vsystem_laplacian_50um_v1.json)")
+    export.add_argument("--fixture", default=None, metavar="ID",
+                        help="build fixtures of the manifest with their own recipes, QA and candidate selection "
+                             "(e.g. F06, F01,F02 or all) into --out, as fixtures.py does; --seed is then an offset "
+                             "added to the manifest's base seeds (default 0)")
     preset = FAMILIES.get(family)
     if preset:
         parser.set_defaults(**preset)
     return parser
+
+
+def explicit_options(family, argv):
+    """The option destinations given on the command line, as opposed to defaults or presets."""
+    probe = build_parser(family)
+    unset = object()
+    probe.set_defaults(**{action.dest: unset for action in probe._actions if action.dest != "help"})
+    return {dest for dest, value in vars(probe.parse_args(argv)).items() if value is not unset}
 
 
 def validate_shaping(args):
@@ -1330,17 +1425,48 @@ def main(argv=None):
         raise SystemExit(f"--family {chosen.family} is not available: the preset is listed but this "
                          "version does not offer it; see the README")
     args = build_parser(chosen.family).parse_args(argv)
-    if args.nifti:
-        from reference import check_destinations, check_options, export_nifti
-        try:
-            check_options(args.fit, args.voxel_size, args.units)
-        except ValueError as error:
-            raise SystemExit(str(error)) from error
+    explicit = explicit_options(chosen.family, argv)
+    if args.fixture is not None or args.manifest is not None:
+        return _run_fixtures(args, explicit)
+    if args.original_export:
+        given = sorted(dest for dest in EXPORT_ONLY if dest in explicit)
+        if given:
+            raise SystemExit("--original_export writes TIFF/NPZ/JSON only; it takes no reference export options "
+                             f"({', '.join('--' + d.replace('_', '-') for d in given)})")
+        return _run_original(args)
+    return _run_export(args, explicit)
+
+
+def _run_fixtures(args, explicit):
+    """--manifest / --fixture: build manifest fixtures with fixtures.py's recipes, QA and layout."""
+    import fixtures
+    if args.fixture is None:
+        raise SystemExit("--manifest needs --fixture (an ID such as F06, a comma-separated list, or all)")
+    others = sorted(dest for dest in explicit
+                    if dest not in ("fixture", "manifest", "out", "seed", "family", "original_export"))
+    if args.original_export or others:
+        given = (["original_export"] if args.original_export else []) + others
+        raise SystemExit("--fixture takes every setting from the manifest; drop "
+                         + ", ".join("--" + d.replace("_", "-") for d in given))
+    forward = ["--manifest", args.manifest or fixtures.DEFAULT_MANIFEST, "--out", args.out]
+    if args.fixture.lower() != "all":
+        forward += ["--only", args.fixture]
+    if args.seed is not None:
+        forward += ["--seed-offset", str(args.seed)]
+    return fixtures.main(forward)
+
+
+def _check_common(args):
     if args.fit == "voxel_size" and args.voxel_size is None:
         raise SystemExit("--fit voxel_size requires --voxel-size")
     if args.d_min is not None and args.d_min <= 0:
         raise SystemExit("--d-min must be a positive diameter")
     validate_shaping(args)
+
+
+def _run_original(args):
+    """The original outputs: binary TIFF, NPZ archive and JSON sidecar per network."""
+    _check_common(args)
     base_seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2 ** 31)
     os.makedirs(args.out, exist_ok=True)
     tVol = tuple(args.volume)
@@ -1354,83 +1480,18 @@ def main(argv=None):
         np.random.seed(seed % (2 ** 32))
         properties, d0, niter = sample_parameters(args)
         stem = f"Lnet_i{niter}_s{seed}"
-        if args.nifti:
-            try:
-                check_destinations(args.out, stem)
-            except OSError as error:
-                raise SystemExit(str(error)) from error
-        if args.d_min is not None and d0 < args.d_min:
-            raise SystemExit(
-                f"--d-min {args.d_min:g} exceeds the root diameter {d0:.3g} sampled for seed "
-                f"{seed}, so the network would be empty; lower --d-min or raise --d0")
-        if stop is not None and d0 < stop:
-            raise SystemExit(
-                f"--bed: feeder_stop x --d-min, {stop:g}, exceeds the root diameter {d0:.3g} sampled for seed "
-                f"{seed}, so the feeder trees would have no tip; lower --d-min or raise --d0")
-        try:
-            grown = grow_network(niter, d0, properties, tVol, fit=args.fit, clip_axes=args.clip_axes,
-                                 voxel_size=args.voxel_size, subdivisions=args.subdivisions,
-                                 d_min=args.d_min, grow_in_volume=args.grow_in_volume, seed=seed,
-                                 **shaping)
-        except RootOutsideBox as error:
-            raise SystemExit(f"--root-offsets: {error} (seed {seed})")
-        except (BedBoxTooSmall, SeedsNotPlaced, TooManySheets) as error:
-            raise SystemExit(f"--bed: {error} (seed {seed})")
+        _check_root(args, d0, stop, seed)
+        grown = _grow(args, niter, d0, properties, tVol, args.fit, args.clip_axes, seed, shaping)
         nodes = grown["nodes"]
         volume = process_network(nodes, tVol, fit=args.fit, voxel_size=args.voxel_size,
                                  clip_axes=grown["clip_axes"], connect=args.connect)
         write_volume(os.path.join(args.out, stem + ".tiff"), volume)
-        streams = {name: [seed, tag] for name, tag in RNG_STREAMS.items()}
-        if shaping["bed"] is not None:
-            streams["bed"] = [seed, BED_TAG]        # the bed's own tag, recorded only when it draws
-        record = {
-            "seed": seed,
-            "iterations": niter,
-            "d0": d0,
-            "d_min": args.d_min,
-            "properties": properties,
-            "volume": list(tVol),
-            "axis_order": "zyx",
-            "units": args.units,
-            "fit": args.fit,
-            "clip_axes": list(grown["clip_axes"]),
-            "connect": args.connect,
-            "grow_in_volume": args.grow_in_volume,
-            "voxel_size": args.voxel_size,
-            "subdivisions": args.subdivisions,
-            "archive_version": ARCHIVE_VERSION,
-            "family": args.family,
-            "trees": len(grown["programs"]),
-            "growth_box_um": grown["growth_box_um"],
-            "root_positions_um": grown["root_positions_um"],
-            "rng_streams": streams,
-            "collision_index": grown["collision_index"],
-            "events": grown["events"],
-            "bridges": len(grown["bridges"]),
-            "bridge_persistence": args.persistence if args.persistence is not None else BRIDGE_PERSISTENCE,
-        }
-        record.update(shaping)
-        record["collision_index"] = grown["collision_index"]      # the kind used, not "auto"
-        record["frame"] = grown["frame"]
-        record["rungs"] = len(grown["rungs"])
-        if "feeder_trees" in grown:
-            record["feeder_trees"] = grown["feeder_trees"]
-        export_error = None
-        if args.nifti:
-            try:
-                record["nifti_reference"] = export_nifti(
-                    args.out, stem, nodes, grown["edges"], volume, args.voxel_size, args.units)
-            except (ValueError, OSError, RuntimeError, AssertionError, MemoryError) as error:
-                export_error = str(error) or type(error).__name__
-                record["nifti_reference"] = {"status": "failed", "reason": export_error}
+        record = _grown_record(args, grown, seed, niter, d0, properties, list(tVol), args.fit, shaping)
         with open(os.path.join(args.out, stem + ".json"), "w") as handle:
             json.dump(record, handle, indent=2)
         save_network(os.path.join(args.out, stem + ".npz"), nodes, program=grown["program"],
                      metadata=record, edges=grown["edges"], node_kind=grown["node_kind"],
                      tree=grown["tree"])
-        if export_error is not None:
-            print(f"{stem}: NIfTI export failed: {export_error}. TIFF/NPZ/JSON retained.", file=sys.stderr)
-            return 1
         if not volume.any():
             print(f"{stem}.tiff: warning: no vessel voxels; the network is outside the volume or "
                   f"below its resolution", file=sys.stderr)
@@ -1450,6 +1511,388 @@ def main(argv=None):
               f"vessel fraction {volume.mean() * 100:.2f}%{calibre}, {tips} tips, {cycles} cycles{shaped}")
     return 0
 
+
+def _check_root(args, d0, stop, seed):
+    if args.d_min is not None and d0 < args.d_min:
+        raise SystemExit(
+            f"--d-min {args.d_min:g} exceeds the root diameter {d0:.3g} sampled for seed "
+            f"{seed}, so the network would be empty; lower --d-min or raise --d0")
+    if stop is not None and d0 < stop:
+        raise SystemExit(
+            f"--bed: feeder_stop x --d-min, {stop:g}, exceeds the root diameter {d0:.3g} sampled for seed "
+            f"{seed}, so the feeder trees would have no tip; lower --d-min or raise --d0")
+
+
+def _grow(args, niter, d0, properties, tVol, fit, clip_axes, seed, shaping):
+    try:
+        return grow_network(niter, d0, properties, tVol, fit=fit, clip_axes=clip_axes,
+                            voxel_size=args.voxel_size, subdivisions=args.subdivisions,
+                            d_min=args.d_min, grow_in_volume=args.grow_in_volume, seed=seed,
+                            **shaping)
+    except RootOutsideBox as error:
+        raise SystemExit(f"--root-offsets: {error} (seed {seed})")
+    except (BedBoxTooSmall, SeedsNotPlaced, TooManySheets) as error:
+        raise SystemExit(f"--bed: {error} (seed {seed})")
+
+
+def _grown_record(args, grown, seed, niter, d0, properties, volume, fit, shaping):
+    """The JSON sidecar of a grown network."""
+    streams = {name: [seed, tag] for name, tag in RNG_STREAMS.items()}
+    if shaping["bed"] is not None:
+        streams["bed"] = [seed, BED_TAG]        # the bed's own tag, recorded only when it draws
+    record = {
+        "seed": seed,
+        "iterations": niter,
+        "d0": d0,
+        "d_min": args.d_min,
+        "properties": properties,
+        "volume": volume,
+        "axis_order": "zyx",
+        "units": args.units,
+        "fit": fit,
+        "clip_axes": list(grown["clip_axes"]),
+        "connect": args.connect,
+        "grow_in_volume": args.grow_in_volume,
+        "voxel_size": args.voxel_size,
+        "subdivisions": args.subdivisions,
+        "archive_version": ARCHIVE_VERSION,
+        "family": args.family,
+        "trees": len(grown["programs"]),
+        "growth_box_um": grown["growth_box_um"],
+        "root_positions_um": grown["root_positions_um"],
+        "rng_streams": streams,
+        "collision_index": grown["collision_index"],
+        "events": grown["events"],
+        "bridges": len(grown["bridges"]),
+        "bridge_persistence": args.persistence if args.persistence is not None else BRIDGE_PERSISTENCE,
+    }
+    record.update(shaping)
+    record["collision_index"] = grown["collision_index"]      # the kind used, not "auto"
+    record["frame"] = grown["frame"]
+    record["rungs"] = len(grown["rungs"])
+    if "feeder_trees" in grown:
+        record["feeder_trees"] = grown["feeder_trees"]
+    return record
+
+
+def _resolve_export(args, explicit):
+    """Export-mode defaults; returns True when the volume is sized to each network."""
+    import reference
+    if "fit" in explicit and args.fit != "voxel_size":
+        raise SystemExit(f"--fit {args.fit}: the reference export renders at a fixed voxel size (--fit "
+                         "voxel_size); use --original_export for the isotropic and stretch fits")
+    args.fit = "voxel_size"
+    if args.voxel_size is None:
+        args.voxel_size = EXPORT_VOXEL_SIZE
+    if args.units.strip().lower() in ("um", "µm", "μm"):
+        preset = FAMILIES.get(args.family) or {}
+        for dest, value in EXPORT_DEFAULTS.items():
+            if dest not in explicit and dest not in preset:
+                setattr(args, dest, value)
+    if "clip_axes" in explicit and args.clip_axes:
+        raise SystemExit("--clip-axes: the reference export never clips the network; drop it or use "
+                         "--original_export")
+    args.clip_axes = ()
+    try:
+        reference.check_options(args.fit, args.voxel_size, args.units)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    recipe = (args.construction != "tree" or args.thin_daughters or args.companion or args.keep_bridges
+              or args.write_unbridged)
+    if recipe and args.units.strip().lower() not in ("um", "µm", "μm"):
+        raise SystemExit("the construction options are in micrometres; they need --units um")
+    if args.construction != "tree":
+        if args.thin_daughters or args.companion or args.keep_bridges or args.anastomose:
+            raise SystemExit(f"--construction {args.construction} takes no thin daughters, companion or "
+                             "anastomosis; those decorate --construction tree")
+        if args.family != "tree":
+            raise SystemExit(f"--construction {args.construction} replaces the grammar; it takes no --family")
+    else:
+        if any(dest in explicit for dest in ("direction", "lengths", "moves", "daughter_diameter")):
+            raise SystemExit("--direction, --lengths, --moves and --daughter-diameter shape a straight or "
+                             "walk_program --construction, not a tree")
+    if args.construction == "walk_program" and args.persistence is None:
+        raise SystemExit("--construction walk_program walks every stem; it needs --persistence")
+    if args.keep_bridges is not None:
+        lo, hi = args.keep_bridges
+        if not 0 <= lo <= hi:
+            raise SystemExit("--keep-bridges MIN MAX needs 0 <= MIN <= MAX")
+        if args.anastomose_mode != "any" or args.bed is not None:
+            raise SystemExit("--keep-bridges bridges one tree in mode any; it takes no arteriovenous mode or --bed")
+    if args.write_unbridged and args.keep_bridges is None:
+        raise SystemExit("--write-unbridged needs --keep-bridges")
+    if args.thin_daughters < 0:
+        raise SystemExit("--thin-daughters cannot be negative")
+    if args.candidates < 1:
+        raise SystemExit("--candidates must be at least 1")
+    for name in ("require_branches", "require_cycles"):
+        bounds = getattr(args, name)
+        if bounds is not None and not 0 <= bounds[0] <= bounds[1]:
+            raise SystemExit(f"--{name.replace('_', '-')} MIN MAX needs 0 <= MIN <= MAX")
+    # a growth box needs a volume: --grow-in-volume (given or from a preset) keeps --volume
+    return "volume" not in explicit and not args.grow_in_volume
+
+
+def _recipe_plan(args, properties, d0):
+    """The recipes.py plan of a straight or walk_program construction from the command line."""
+    import recipes
+    common = dict(recipes.COMMON, k=args.k, roll_angle=args.roll_angle, subdivisions=args.subdivisions,
+                  collision_margin_um=args.collision_margin, collision_attempts=args.collision_attempts)
+    spec = {"root_diameter_um": d0, "persistence": args.persistence}
+    construction = args.construction
+    if construction == "straight_tube":
+        plan = dict(recipes.PLANS["F01"])
+        if args.lengths is not None:
+            if len(args.lengths) != 1:
+                raise SystemExit("--construction straight_tube takes one --lengths value")
+            plan["length_um"] = args.lengths[0]
+        if args.direction is not None:
+            plan["direction"] = tuple(args.direction)
+    elif construction == "straight_y":
+        plan = dict(recipes.PLANS["F02"])
+        if args.lengths is not None:
+            if len(args.lengths) != 3:
+                raise SystemExit("--construction straight_y takes three --lengths values (root, daughter 1, 2)")
+            plan["root_length_um"], plan["daughter_lengths_um"] = args.lengths[0], tuple(args.lengths[1:])
+        if args.direction is not None:
+            plan["root_direction"] = tuple(args.direction)
+        if args.daughter_diameter is not None:
+            plan["daughter1_diameter_um"] = args.daughter_diameter
+    else:
+        y = args.daughter_diameter is not None
+        plan = dict(recipes.PLANS["F04" if y else "F03"])
+        if y:
+            plan["daughter1_diameter_um"] = args.daughter_diameter
+        if args.lengths is not None:
+            plan["lengths_um"] = tuple(args.lengths)
+        if args.moves is not None:
+            plan["moves"] = tuple(args.moves)
+        stems = 3 if y else 1
+        if len(plan["lengths_um"]) != stems or len(plan["moves"]) != stems:
+            raise SystemExit(f"a {'walked Y' if y else 'single walked stem'} takes {stems} --lengths and "
+                             f"{stems} --moves values")
+        if args.direction is not None:
+            plan["direction"] = tuple(args.direction)
+    plan.update({"properties": properties, "common": common})
+    return spec, plan
+
+
+def _build_candidate(args, seed, tVol, shaping, stop):
+    """One candidate network of the export mode: (candidate dict or None, failure reason or None)."""
+    import recipes
+    random.seed(seed)
+    np.random.seed(seed % (2 ** 32))
+    properties, d0, niter = sample_parameters(args)
+    if args.d_min is not None and d0 < args.d_min:
+        return None, f"root diameter {d0:.3g} drawn below --d-min {args.d_min:g}"
+    _check_root(args, d0, stop, seed)
+    base = {"seed": seed, "iterations": niter, "d0": d0, "properties": properties}
+    if args.construction != "tree":
+        spec, plan = _recipe_plan(args, properties, d0)
+        result = recipes.build(spec, plan, seed)
+        built, failure = result
+        if built is None:
+            return None, failure["reason"]
+        base.update(nodes=built["nodes"], tree=built["tree"], program=built["program"], events=built["events"],
+                    construction=args.construction, recipe=built["params"], grown=None, extras=built["extras"])
+        base["stem"] = f"Lnet_{args.construction}_s{seed}"
+        return base, None
+
+    bridged = args.keep_bridges is not None
+    if bridged:
+        shaping = dict(shaping, anastomose=False)
+    grown = _grow(args, niter, d0, properties, tVol, "voxel_size", (), seed, shaping)
+    nodes, edges = grown["nodes"], grown["edges"]
+    origin = np.where(np.isfinite(nodes[0]), recipes.ORIGIN["grammar_walk_tree"], -1).astype(np.int8)
+    labels = {"tree": grown["tree"], "origin": origin}
+    pruned, notes = [], []
+    plain = np.array_equal(graph.build(nodes)["edges"], edges)
+    if args.prune_stubs and plain:
+        nodes, labels, pruned = recipes.prune_buried_stubs(nodes, labels)
+    elif args.prune_stubs:
+        notes.append("stub pruning skipped: the network has edges between non-consecutive columns")
+    state = {"nodes": nodes, "tree": labels["tree"], "origin": labels["origin"], "program": grown["program"],
+             "events": dict(grown["events"], buried_stubs_pruned=len(pruned)), "pruned_stubs": pruned}
+    common = dict(recipes.COMMON, k=args.k, collision_margin_um=args.collision_margin,
+                  collision_attempts=args.collision_attempts)
+    extras = {"pruned_stubs": pruned}
+    recipe = {}
+    if args.thin_daughters:
+        plan = {"thin_count": args.thin_daughters, "thin_diameter_um": tuple(args.thin_diameter),
+                "thin_protrusion_um": tuple(args.thin_protrusion), "host_min_diameter_um": args.thin_host_min,
+                "max_attempts": max(400, 80 * args.thin_daughters)}
+        built, failure = recipes.add_thin_daughters(state, {}, plan, seed, common)
+        if built is None:
+            return None, failure["reason"]
+        state = dict(state, nodes=built["nodes"], tree=built["tree"], origin=built["origin"])
+        extras.update(built["extras"])
+        recipe["thin_daughters"] = plan
+    if args.companion:
+        plan = dict(recipes.PLANS["F10"])
+        clearance = args.companion_clearance
+        plan.update({"companion_diameter_um": tuple(args.companion_diameter), "target_clearance_um": clearance,
+                     "approach_band_um": (clearance - 25.0, clearance + 25.0)})
+        persistence = args.persistence if args.persistence is not None else BRIDGE_PERSISTENCE
+        built, failure = recipes.add_companion(state, {}, plan, seed, persistence, common)
+        if built is None:
+            return None, failure["reason"]
+        state = dict(state, nodes=built["nodes"], tree=built["tree"], origin=built["origin"])
+        extras.update(built["extras"])
+        recipe["companion"] = {k: plan[k] for k in ("companion_diameter_um", "target_clearance_um",
+                                                    "approach_band_um", "run_length_um", "leave_angle_deg")}
+    unbridged = None
+    if bridged:
+        plan = {"bridges": tuple(args.keep_bridges), "anastomosis_fraction": args.anastomosis_fraction,
+                "anastomosis_radius": args.anastomosis_radius,
+                "anastomosis_min_separation": args.anastomosis_min_separation}
+        persistence = args.persistence if args.persistence is not None else BRIDGE_PERSISTENCE
+        unbridged = state["nodes"]
+        built, failure = recipes.add_bridges(state, {}, plan, seed, persistence, common)
+        if built is None:
+            return None, failure["reason"]
+        state = dict(state, nodes=built["nodes"], tree=built["tree"], origin=built["origin"],
+                     events=built["events"])
+        extras.update({k: v for k, v in built["extras"].items() if k != "bridges_assessed"})
+        recipe["keep_bridges"] = plan
+    changed = not (state["nodes"].shape == grown["nodes"].shape
+                   and np.array_equal(state["nodes"], grown["nodes"], equal_nan=True))
+    base.update(nodes=state["nodes"], tree=state["tree"], program=grown["program"], events=state["events"],
+                construction="tree", recipe=recipe, grown=grown, extras=extras, notes=notes,
+                edges=graph.build(state["nodes"])["edges"] if changed else edges, unbridged=unbridged)
+    base["stem"] = f"Lnet_i{niter}_s{seed}"
+    return base, None
+
+
+def _grid(args, nodes, auto, tVol):
+    """(shape, points, radii, transform, affine) of the export grid; points by the renderer's own mapping."""
+    import reference
+    if auto:
+        shape, transform, affine = reference.choose_grid(nodes, args.voxel_size, args.units)
+    else:
+        shape = tVol
+        _, transform, affine = reference.rendering_grid(nodes, shape, args.voxel_size, args.units)
+    points, radii = fit_to_volume(nodes, shape, fit="voxel_size", voxel_size=args.voxel_size)
+    return shape, points, radii, transform, affine
+
+
+def _run_export(args, explicit):
+    """The default outputs: NIfTI mask, 26-connected references, GraphML and JSON per network."""
+    import reference
+    from computeVoxel import rasterise_segments
+    auto = _resolve_export(args, explicit)
+    _check_common(args)
+    base_seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2 ** 31)
+    os.makedirs(args.out, exist_ok=True)
+    tVol = tuple(args.volume)
+    shaping = shaping_options(args)
+    stop = None if shaping["bed"] is None else shaping["bed"]["feeder_stop"] * args.d_min
+    status = 0
+    for index in range(args.count):
+        history, accepted = [], None
+        for attempt in range(args.candidates):
+            seed = base_seed + index + 1000 * attempt
+            candidate, failure = _build_candidate(args, seed, tVol, shaping, stop)
+            entry = {"candidate_index": attempt, "seed": seed}
+            if candidate is None:
+                history.append(dict(entry, passed=False, reason=f"construction failed: {failure}"))
+                continue
+            nodes = candidate["nodes"]
+            edges = candidate.get("edges")
+            if edges is None:
+                edges = graph.build(nodes)["edges"]
+            record = reference.graph_record(nodes, edges)
+            branches, cycles = len(record["branches"]), record["betti"]["cycles"]
+            entry.update(branches=branches, cycles=cycles)
+            ranges = [("branches", branches, args.require_branches), ("cycles", cycles, args.require_cycles)]
+            outside = [f"{name} {value} outside {bounds[0]}-{bounds[1]}" for name, value, bounds in ranges
+                       if bounds is not None and not bounds[0] <= value <= bounds[1]]
+            if outside:
+                history.append(dict(entry, passed=False, reason="; ".join(outside)))
+                continue
+            try:
+                shape, points, radii, transform, affine = _grid(args, nodes, auto, tVol)
+                mask = rasterise_segments(points, radii, shape, connect=args.connect)
+                report = reference.export_references(
+                    args.out, reference.stem_names(candidate["stem"]), nodes, edges, mask, points, affine,
+                    transform, {"network_id": candidate["stem"], "seed": seed})
+                unbridged_report = None
+                if args.write_unbridged:
+                    # the tree's columns come first, so its points are the bridged network's
+                    u_nodes = candidate["unbridged"]
+                    n0 = u_nodes.shape[1]
+                    u_points, u_radii = points[:, :n0], radii[:n0]
+                    u_mask = rasterise_segments(u_points, u_radii, shape, connect=args.connect)
+                    unbridged_report = reference.export_references(
+                        args.out, reference.stem_names(candidate["stem"] + "_unbridged"), u_nodes,
+                        graph.build(u_nodes)["edges"], u_mask, u_points, affine, transform,
+                        {"network_id": candidate["stem"] + "_unbridged", "seed": seed})
+            except FileExistsError as error:
+                raise SystemExit(str(error)) from error
+            except (ValueError, OSError, RuntimeError, AssertionError, MemoryError) as error:
+                history.append(dict(entry, passed=False, reason=f"reference export failed: "
+                                                                f"{str(error) or type(error).__name__}"))
+                continue
+            history.append(dict(entry, passed=True))
+            accepted = (candidate, report, unbridged_report, shape, mask)
+            break
+        if accepted is None:
+            failed = os.path.join(args.out, f"Lnet_failed_s{base_seed + index}.json")
+            with open(failed, "w") as handle:
+                json.dump({"status": "failed", "seed": base_seed + index, "candidates": history}, handle, indent=2)
+            print(f"network {index} (seed {base_seed + index}): no candidate accepted in {args.candidates}; "
+                  f"last: {history[-1]['reason']}. See {failed}; --original_export writes the TIFF without "
+                  f"references", file=sys.stderr)
+            status = 1
+            continue
+        candidate, report, unbridged_report, shape, mask = accepted
+        _write_export_record(args, candidate, report, unbridged_report, shape, shaping, history)
+        nodes = candidate["nodes"]
+        graphml = report["graphml"]
+        counted = {k: v for k, v in candidate["events"].items() if v}
+        shaped = (", events " + " ".join(f"{k}={v}" for k, v in sorted(counted.items()))) if counted else ""
+        tried = f", candidate {len(history) - 1}" if len(history) > 1 else ""
+        print(f"{candidate['stem']}: d0 {candidate['d0']:.1f} {args.units}, grid {'x'.join(map(str, shape))} at "
+              f"{args.voxel_size:g} {args.units}, vessel fraction {mask.mean() * 100:.2f}%, "
+              f"{graphml['edges']} branches, {graphml['tips']} tips, {graphml['cycles']} cycles{tried}{shaped}")
+    return status
+
+
+def _write_export_record(args, candidate, report, unbridged_report, shape, shaping, history):
+    if candidate["grown"] is not None:
+        record = _grown_record(args, candidate["grown"], candidate["seed"], candidate["iterations"],
+                               candidate["d0"], candidate["properties"], list(shape), "voxel_size", shaping)
+        if args.keep_bridges is not None:
+            record["anastomose"] = False
+            record["bridges"] = len(candidate["extras"].get("bridges_selected", []))
+        record["events"] = candidate["events"]
+    else:
+        record = {"seed": candidate["seed"], "d0": candidate["d0"], "properties": candidate["properties"],
+                  "volume": list(shape), "units": args.units, "fit": "voxel_size", "clip_axes": [],
+                  "connect": args.connect, "voxel_size": args.voxel_size, "subdivisions": args.subdivisions,
+                  "events": candidate["events"]}
+    record["axis_order"] = "xyz"
+    record["export"] = "reference"
+    record["construction"] = candidate["construction"]
+    record["recipe"] = candidate["recipe"]
+    record["program"] = candidate["program"]
+    record["prune_stubs"] = args.prune_stubs
+    record["adapter_events"] = {k: v for k, v in candidate["extras"].items()}
+    if candidate.get("notes"):
+        record["notes"] = candidate["notes"]
+    record["candidates"] = history
+    record["reference_export"] = report
+    if unbridged_report is not None:
+        record["unbridged_reference_export"] = unbridged_report
+    with open(os.path.join(args.out, candidate["stem"] + ".json"), "w") as handle:
+        json.dump(record, handle, indent=2, default=_json_default)
+
+
+def _json_default(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    raise TypeError(f"{type(value).__name__} is not JSON serialisable")
 
 if __name__ == "__main__":
     sys.exit(main())

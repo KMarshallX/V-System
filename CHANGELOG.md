@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+**`main.py` changes its default output.** It now writes reference data for
+evaluating skeletonizations instead of a TIFF; `--original_export` restores the
+previous outputs and defaults exactly (the same TIFF, NPZ and JSON bytes for the
+same arguments).
+
+### Default export
+
+- Per network: `<stem>_vessel_mask.nii.gz` (binary uint8 mask, x, y, z, mm),
+  `<stem>_reference_26_con.nii.gz` and `<stem>_reference_26_con_centered.nii.gz`
+  (26-connected references traced from the generating centrelines, the second
+  re-routed towards higher foreground clearance with per-branch voxel counts,
+  endpoints and (26,6) topology kept), `<stem>_reference_graph.graphml`
+  (SkelHub-style graph: tips and junctions as nodes, one edge per branch with the
+  smooth centreline and its centred voxel path) and `<stem>.json`.
+- Rendering at a fixed `--voxel-size` (default 50 µm), `--fit voxel_size`, no
+  clipping, on a volume sized to the network plus a 4-voxel border unless
+  `--volume` is given. `--fit isotropic`/`stretch` and `--clip-axes` are refused
+  outside `--original_export`.
+- Options not given (nor set by a `--family` preset) take the
+  `vsystem_laplacian_50um_v1` tree scheme: `--d0 350 100 --d-min 50 --iterations 4 7
+  --epsilon 6 6 --randmarg 0.15 0.15 --aneurysm-prob 0 --stenosis-prob 0
+  --subdivisions 4 --tortuosity walk --persistence 8 --avoid-collisions
+  --collision-margin 100 --collision-attempts 20 --collision-index grid
+  --candidates 8`.
+- Buried collision stubs are pruned before export (`--no-prune-stubs` keeps them).
+- Candidates: `--candidates N`, `--require-branches`, `--require-cycles`; candidate
+  *i* uses seed + 1000 *i*. A network with no accepted candidate leaves
+  `Lnet_failed_s<seed>.json` and the run exits with 1. An existing output file
+  stops the run.
+- Construction options: `--construction straight_tube|straight_y|walk_program`
+  (`--direction`, `--lengths`, `--moves`, `--daughter-diameter`), `--thin-daughters`,
+  `--companion`, `--keep-bridges` with `--write-unbridged`.
+- `--nifti` is removed; the default replaces it.
+
+### Fixtures
+
+- `fixtures.py` builds the `vsystem_laplacian_50um_v1` fixture set from
+  `presets/fixtures/vsystem_laplacian_50um_v1.json`, with its candidate selection,
+  geometry and digital-topology QA and dataset layout, now including both
+  26-connected references and the GraphML. With the default seeds it reproduces
+  the published set exactly (networks, masks, references, GraphML attributes);
+  `--seed-offset` draws new networks from the same recipes. `main.py --fixture ID`
+  runs it for a subset.
+- `recipes.py` holds the building blocks; `reference.py` gains `choose_grid`,
+  `graph_record`, `write_graphml` and `export_references`.
+- `docs/fixtures_v1.md`: one plain `main.py` command per fixture.
+
+### Packaging
+
+- `nibabel`, `scipy` and `python-igraph` are core dependencies. New `fixtures`
+  extra (scikit-image, matplotlib); the `nifti` extra is kept, empty.
+
 ## 3.10.1
 
 Version 3.10.1 fixes a crash in the anti-aliased voxeliser and changes

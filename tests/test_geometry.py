@@ -165,8 +165,10 @@ class ReferenceFixtureTests(unittest.TestCase):
 
     @staticmethod
     def _run(code_dir, args, out):
+        # the current command line needs --original_export for the TIFF outputs; the previous one has no such flag
+        original = ["--original_export"] if os.path.realpath(code_dir) == os.path.realpath(ROOT) else []
         result = subprocess.run([sys.executable, os.path.join(code_dir, "main.py"), "--count", "1",
-                                 "--out", out] + args, capture_output=True, text=True, cwd=code_dir)
+                                 "--out", out] + original + args, capture_output=True, text=True, cwd=code_dir)
         if result.returncode:
             raise AssertionError(f"{code_dir}: {result.stderr}")
         stem = next(n[:-4] for n in os.listdir(out) if n.endswith(".npz"))
@@ -206,7 +208,7 @@ class ReferenceFixtureTests(unittest.TestCase):
             with self.subTest(fixture=name):
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        status = main(["--count", "1", "--seed", str(record["seed"]),
+                        status = main(["--original_export", "--count", "1", "--seed", str(record["seed"]),
                                        "--volume", "64", "64", "32", "--out", out])
                     self.assertEqual(status, 0)
                     written = load_network(os.path.join(out, name))
@@ -287,7 +289,7 @@ class ContractTests(unittest.TestCase):
                 "--collision-margin", "0.5", "--anastomose", "--anastomosis-fraction", "0.4"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(args + ["--out", out]), 0)
+                self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".json"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)
@@ -423,7 +425,7 @@ class TortuosityTests(unittest.TestCase):
             grow_network(4, 20.0, PROPERTIES, SMALL, tortuosity="walk", persistence=5.0)
         with tempfile.TemporaryDirectory() as out:
             with self.assertRaises(SystemExit) as caught:
-                main(["--count", "1", "--seed", "1", "--tortuosity", "walk", "--out", out])
+                main(["--original_export", "--count", "1", "--seed", "1", "--tortuosity", "walk", "--out", out])
             self.assertIn("--persistence", str(caught.exception))
 
     def test_a_walk_stays_inside_the_growth_box(self):
@@ -533,7 +535,7 @@ class CollisionTests(unittest.TestCase):
                 "--avoid-collisions", "--collision-margin", "0"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(args + ["--out", out]), 0)
+                self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".json"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)
@@ -709,12 +711,12 @@ class FamilyTests(unittest.TestCase):
         with mock.patch.dict(FAMILIES, {"unoffered": None}):
             with tempfile.TemporaryDirectory() as out:
                 with self.assertRaises(SystemExit) as caught:
-                    main(["--family", "unoffered", "--count", "1", "--seed", "1", "--out", out])
+                    main(["--original_export", "--family", "unoffered", "--count", "1", "--seed", "1", "--out", out])
                 self.assertEqual(os.listdir(out), [])
         self.assertIn("unoffered", str(caught.exception))
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                main(["--family", "capillary", "--count", "1", "--seed", "1"])
+                main(["--original_export", "--family", "capillary", "--count", "1", "--seed", "1"])
         self.assertFalse(any(preset is None for preset in FAMILIES.values()))
 
     def test_every_available_family_runs_end_to_end(self):
@@ -724,7 +726,7 @@ class FamilyTests(unittest.TestCase):
                         "--iterations", "6", "6"]
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(main(args + ["--out", out]), 0)
+                        self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
                     stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".json"))
                     with open(os.path.join(out, stem + ".json")) as handle:
                         record = json.load(handle)
