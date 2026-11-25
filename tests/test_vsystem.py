@@ -395,8 +395,8 @@ class CommandLineTests(unittest.TestCase):
 
         args = ["--count", "2", "--seed", "42", "--volume", "48", "40", "16", "--iterations", "3", "4"]
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            self.assertEqual(main(args + ["--out", first]), 0)
-            self.assertEqual(main(args + ["--out", second]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", first]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", second]), 0)
             tiffs = sorted(f for f in os.listdir(first) if f.endswith(".tiff"))
             self.assertEqual(len(tiffs), 2)
             first_seed = [f for f in tiffs if f.endswith("_s42.tiff")]
@@ -422,7 +422,7 @@ class CommandLineTests(unittest.TestCase):
         args = ["--count", "1", "--seed", "7", "--volume", "64", "64", "32",
                 "--iterations", "4", "4", "--fit", "voxel_size", "--voxel-size", "6"]
         with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(main(args + ["--out", out]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".tiff"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)
@@ -447,7 +447,7 @@ class CommandLineTests(unittest.TestCase):
         args = ["--count", "1", "--seed", "3", "--volume", "48", "48", "24",
                 "--iterations", "8", "8", "--units", "mm", "--d-min", "6"]
         with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(main(args + ["--out", out]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".tiff"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)
@@ -460,14 +460,14 @@ class CommandLineTests(unittest.TestCase):
         from main import main
         with tempfile.TemporaryDirectory() as out:
             with self.assertRaises(SystemExit) as caught:
-                main(["--count", "1", "--seed", "1", "--d-min", "0", "--out", out])
+                main(["--original_export", "--count", "1", "--seed", "1", "--d-min", "0", "--out", out])
             self.assertIn("--d-min", str(caught.exception))
 
     def test_a_d_min_above_the_root_diameter_is_refused_rather_than_left_blank(self):
         from main import main
         with tempfile.TemporaryDirectory() as out:
             with self.assertRaises(SystemExit) as caught:
-                main(["--count", "1", "--seed", "5", "--volume", "64", "64", "32",
+                main(["--original_export", "--count", "1", "--seed", "5", "--volume", "64", "64", "32",
                       "--d-min", "500", "--out", out])
             self.assertIn("empty", str(caught.exception))
             self.assertEqual([f for f in os.listdir(out) if f.endswith(".tiff")], [])
@@ -480,7 +480,7 @@ class CommandLineTests(unittest.TestCase):
 
         args = ["--count", "1", "--seed", "9", "--volume", "64", "56", "24", "--iterations", "5", "5"]
         with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(main(args + ["--out", out]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".tiff"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)
@@ -500,8 +500,8 @@ class CommandLineTests(unittest.TestCase):
 
         args = ["--count", "1", "--seed", "9", "--volume", "64", "56", "24", "--iterations", "5", "5"]
         with tempfile.TemporaryDirectory() as joined, tempfile.TemporaryDirectory() as bare:
-            self.assertEqual(main(args + ["--out", joined]), 0)
-            self.assertEqual(main(args + ["--no-connect", "--out", bare]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", joined]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--no-connect", "--out", bare]), 0)
             stem = next(n[:-5] for n in os.listdir(bare) if n.endswith(".tiff"))
             with open(os.path.join(bare, stem + ".json")) as handle:
                 self.assertFalse(json.load(handle)["connect"])
@@ -830,7 +830,7 @@ class BoundedGrowthTests(unittest.TestCase):
         args = ["--count", "1", "--seed", "5", "--volume", "64", "64", "24",
                 "--iterations", "7", "7", "--grow-in-volume"]
         with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(main(args + ["--out", out]), 0)
+            self.assertEqual(main(["--original_export"] + args + ["--out", out]), 0)
             stem = next(n[:-5] for n in os.listdir(out) if n.endswith(".tiff"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 record = json.load(handle)

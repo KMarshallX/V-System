@@ -592,7 +592,7 @@ def run_main(argv):
     """main.main(argv) with its output captured; returns (status, SystemExit or None)."""
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
-            return main.main(argv), None
+            return main.main(["--original_export"] + argv), None
         except SystemExit as caught:
             return None, caught
 
@@ -1311,10 +1311,12 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(bed.SETTING_KEYS, SETTING_KEYS_3_7)
         self.assertEqual(len(bed.SETTING_KEYS), 13)
 
-    def test_main_s_import_closure_is_3_7_s(self):
+    def test_main_import_closure_only_adds_the_reference_export(self):
         root = os.path.dirname(os.path.abspath(bed.__file__))
-        # by every import statement, at any depth of each module
-        self.assertEqual(static_closure("main", root), set(MAIN_CLOSURE_3_7))
+        # by every import statement, at any depth of each module: the export mode's lazily
+        # imported reference export, fixture recipes (which measure with describe) and fixture runner
+        self.assertEqual(static_closure("main", root),
+                         set(MAIN_CLOSURE_3_7) | {"reference", "recipes", "fixtures", "describe"})
         # by what a fresh interpreter has loaded from the repository once it imports main
         script = ("import json, os, sys; root = sys.argv[1]; sys.path.insert(0, root); import main; "
                   "files = {name: getattr(module, '__file__', None) for name, module in list(sys.modules.items())}; "

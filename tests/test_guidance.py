@@ -208,7 +208,7 @@ class RuleTests(unittest.TestCase):
                     grow(3, niter=3, d_min=2.0, guidance=spec, **WALK)
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
-                        main.main(["--count", "1", "--seed", "3", "--iterations", "3", "3", "--volume", "48", "48",
+                        main.main(["--original_export"] + ["--count", "1", "--seed", "3", "--iterations", "3", "3", "--volume", "48", "48",
                                    "24", "--tortuosity", "walk", "--persistence", "10", "--d-min", "2",
                                    "--guidance", json.dumps(spec), "--out", out])
                     self.assertNotEqual(caught.exception.code, 0)
@@ -680,7 +680,7 @@ class GrowthTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as out:
                     with self.assertRaises(SystemExit) as caught:
                         with contextlib.redirect_stdout(io.StringIO()):
-                            main.main(base + extra + ["--out", out])
+                            main.main(["--original_export"] + base + extra + ["--out", out])
                     self.assertNotEqual(caught.exception.code, 0)
                     self.assertEqual(os.listdir(out), [])
         for extra in (["--guidance", "not json"], ["--root-offsets", "[1, 0, 0"]):
@@ -755,7 +755,7 @@ class FrameRecordTests(unittest.TestCase):
                 "--iterations", "4", "4", "--fit", "voxel_size", "--voxel-size", "2"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main.main(argv + ["--out", out]), 0)
+                self.assertEqual(main.main(["--original_export"] + argv + ["--out", out]), 0)
             stem = next(name[:-5] for name in os.listdir(out) if name.endswith(".json"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 sidecar = json.load(handle)
@@ -785,7 +785,7 @@ class FamilyTests(unittest.TestCase):
                 "--iterations", "5", "5", "--fit", "voxel_size", "--voxel-size", "2"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()) as printed:
-                self.assertEqual(main.main(argv + ["--out", out]), 0)
+                self.assertEqual(main.main(["--original_export"] + argv + ["--out", out]), 0)
             names = sorted(os.listdir(out))
             self.assertEqual([os.path.splitext(name)[1] for name in names], [".json", ".npz", ".tiff"])
             network = main.load_network(os.path.join(out, names[1]))
@@ -801,12 +801,12 @@ class FamilyTests(unittest.TestCase):
         with mock.patch.dict(FAMILIES, {"unoffered": None}):
             with tempfile.TemporaryDirectory() as out:
                 with self.assertRaises(SystemExit) as caught:
-                    main.main(["--family", "unoffered", "--count", "1", "--seed", "1", "--out", out])
+                    main.main(["--original_export"] + ["--family", "unoffered", "--count", "1", "--seed", "1", "--out", out])
                 self.assertIn("unoffered", str(caught.exception))
                 self.assertEqual(os.listdir(out), [])
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                main.main(["--family", "capillary", "--count", "1", "--seed", "1"])
+                main.main(["--original_export"] + ["--family", "capillary", "--count", "1", "--seed", "1"])
 
 
 class TightFamilyTests(unittest.TestCase):
@@ -852,10 +852,10 @@ class TightFamilyTests(unittest.TestCase):
                 "--iterations", "5", "5", "--fit", "voxel_size", "--voxel-size", "2"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                main.main(argv + ["--out", out])
+                main.main(["--original_export"] + argv + ["--out", out])
             self.assertEqual(os.listdir(out), [])
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main.main(argv + ["--d-min", "2", "--out", out]), 0)
+                self.assertEqual(main.main(["--original_export"] + argv + ["--d-min", "2", "--out", out]), 0)
             stem = next(name[:-5] for name in os.listdir(out) if name.endswith(".json"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 sidecar = json.load(handle)

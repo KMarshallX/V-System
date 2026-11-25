@@ -79,9 +79,10 @@ Python 3.10 or newer.
 ```bash
 git clone https://github.com/psweens/V-System.git
 cd V-System
-pip install -e .              # numpy and tifffile only
-pip install -e ".[viz]"       # plus matplotlib, for plotting
-pip install -e ".[preprocess]"  # plus OpenCV, for resize_volume
+pip install -e .                 # numpy, tifffile, nibabel, scipy and python-igraph
+pip install -e ".[fixtures]"     # plus scikit-image and matplotlib, for fixtures.py
+pip install -e ".[viz]"          # plus matplotlib, for plotting
+pip install -e ".[preprocess]"   # plus OpenCV, for resize_volume
 ```
 
 ---
@@ -94,8 +95,35 @@ Generate five networks into `./output`, reproducibly:
 python main.py --count 5 --out ./output --seed 1
 ```
 
-Each network is written as three files sharing the stem
-`Lnet_i<generations>_s<seed>`:
+By default each network is rendered at a fixed voxel size (`--voxel-size`, 50 µm)
+on a volume sized to the whole network plus four empty voxels on every side, and
+written as five files sharing the stem `Lnet_i<generations>_s<seed>`:
+
+| File | Contents |
+| --- | --- |
+| `_vessel_mask.nii.gz` | binary uint8 0/1 vessel mask, arrays indexed x, y, z, spacing in mm |
+| `_reference_26_con.nii.gz` | the generating centrelines re-traced as a shortest ordered 26-connected voxel path per branch, keeping the rounded branch endpoints |
+| `_reference_26_con_centered.nii.gz` | the same paths re-routed towards higher foreground clearance, keeping per-branch voxel counts, endpoints and (26,6) digital topology: the reference to evaluate a skeletonization against |
+| `_reference_graph.graphml` | SkelHub-style reference graph: one node per tip or junction (`X`/`Y`/`Z` in mm, `voxel_pos`, `voxels`) and one edge per branch carrying the smooth generating centreline (`centerline_world_points`, `centerline_voxel_points`) and its centred 26-connected path (`centerline_voxels`) |
+| `.json` | the seed, the unit convention, every parameter used and the reference export report (affine, per-branch voxel paths, topology, checksums) |
+
+Neither reference is a skeletonization of the mask; both are checked to lie inside
+it and to keep the source graph's components and loops. The export mode uses the
+tree scheme of the `vsystem_laplacian_50um_v1` fixtures for every option you do
+not give (and a `--family` preset does not set): `--d0 350 100 --d-min 50
+--iterations 4 7 --epsilon 6 6 --randmarg 0.15 0.15 --aneurysm-prob 0
+--stenosis-prob 0 --subdivisions 4 --tortuosity walk --persistence 8
+--avoid-collisions --collision-margin 100 --collision-attempts 20
+--collision-index grid --candidates 8`. Buried collision stubs (terminal branches
+whose tip ends less than 100 µm outside another vessel) are pruned first, since no
+reference can recover them; `--no-prune-stubs` keeps them. Candidate *i* of network
+*n* uses seed `seed + n + 1000 i`, and the first whose references pass is written;
+if none does, `Lnet_failed_s<seed>.json` records why and the run exits with 1.
+See *Reference export and fixtures* below for the construction options.
+
+`--original_export` writes the original outputs instead, with the original
+defaults (isotropic fit, z clipped, a `512 × 512 × 140` volume) and the parser's
+own option defaults, as three files per network:
 
 | File | Contents |
 | --- | --- |
@@ -103,8 +131,9 @@ Each network is written as three files sharing the stem
 | `.npz` | the centreline: `nodes`, the (4, N) array of x, y, z and diameter in grammar units with NaN column separators; `edges`, the (2, E) graph of column indices; `node_kind` and `tree`, per-column labels; `program`, the grammar string; and `metadata`, the sidecar record |
 | `.json` | the seed, the unit convention and every parameter used |
 
-Network *i* of a run uses `seed + i`, and the same seed and parameters reproduce
-the same volume. The default volume is an imaging slab, fitted in x and y and
+The rest of this section, the defaults in the table below and the examples
+elsewhere in this README that read `.tiff` files describe `--original_export`. Network *i* of a run uses `seed + i`, and the same seed and
+parameters reproduce the same volume. The default volume is an imaging slab, fitted in x and y and
 clipped in z, so vessels leave and re-enter it and a deep network renders as
 several pieces; see *Connectivity* below for what that means and how to change
 it. The centreline archive grows with the number of drawn
@@ -155,6 +184,43 @@ terminates unevenly. Either way, raise `--iterations` above the estimate to let
 `--d-min` decide. It bounds the diameter a branch is *drawn* at, not the
 diameter after a local anomaly: a stenosis still narrows a drawn sub-segment by
 `--stenosis-prob`'s factor of 0.5, so set `--stenosis-prob 0` for a hard floor.
+
+### Reference export and fixtures
+
+The export mode can also build the controlled shapes of the
+`vsystem_laplacian_50um_v1` fixtures (lengths and diameters in µm):
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--construction` | `tree` | `tree` (the grammar), `straight_tube`, `straight_y` or `walk_program` (one walked stem, or a walked Y with `--daughter-diameter`); the root diameter is the `--d0` draw |
+| `--direction X Y Z`, `--lengths …`, `--moves …`, `--daughter-diameter` | the v1 fixtures' | shape of a straight or walked construction |
+| `--thin-daughters N` | `0` | add N thin (`--thin-diameter`, 50–70 µm), short (`--thin-protrusion`, 150–300 µm beyond the host surface) terminal side daughters on stems of at least `--thin-host-min` (300 µm) |
+| `--companion` | off | add one side branch (`--companion-diameter`, 100–150 µm) routed alongside a nonincident branch at `--companion-clearance` (125 µm) |
+| `--keep-bridges MIN MAX` | none | anastomose the grown tree (mode any) and keep a seeded subset of MIN–MAX bridges whose loop opening is at least 150 µm; `--write-unbridged` also exports the tree before its bridges on the same grid |
+| `--candidates N` | `8` | tries per network (seed + 1000 i) |
+| `--require-branches MIN MAX`, `--require-cycles MIN MAX` | any | accepted branch and cycle counts |
+| `--no-prune-stubs` | off | keep buried collision stubs |
+
+`docs/fixtures_v1.md` lists one such command per fixture. They draw new networks
+of the same kind, not the saved ones, because `main.py` draws its parameters before
+growing. To rebuild the fixtures themselves, with their own candidate selection
+and QA, use `fixtures.py`, or `main.py --fixture`, which runs it:
+
+```bash
+python fixtures.py --out vsystem_laplacian_50um_v1          # all twelve, as published
+python main.py --fixture F06,F07 --out some_dir              # a subset, through main.py
+python fixtures.py --seed-offset 1000 --out new_set          # new networks, same recipes and QA
+```
+
+`fixtures.py` reads `presets/fixtures/vsystem_laplacian_50um_v1.json` (or
+`--manifest`) and writes the dataset layout: per fixture `vessel_mask.nii.gz`,
+`reference_skeleton_26_con.nii.gz`, `reference_skeleton_26_con_centered.nii.gz`,
+`reference_graph.graphml`, `reference_graph.json`, `reference_network.npz`,
+`metadata.json` and `preview.png` (F11/F12 also an `unbridged/` counterpart), and
+`dataset_index.csv`, `validation_report.json`, `manifest.resolved.json`,
+`generation.log` and a README for the set. With the default seeds it reproduces
+the published set exactly: networks, masks, both references and the GraphML
+attributes. `--write-6con` also writes the renderer-chain trace the QA uses.
 
 ### Connectivity
 

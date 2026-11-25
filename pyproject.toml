@@ -13,13 +13,17 @@ authors = [{name = "Paul W. Sweeney"}]
 dependencies = [
     "numpy>=1.24",
     "tifffile>=2023.7",
+    "nibabel>=5.0",
+    "scipy>=1.10",
+    "python-igraph>=0.10",
 ]
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.6"]
 preprocess = ["opencv-python-headless>=4.8"]
 collision = ["scipy>=1.10"]
-nifti = ["nibabel>=5.0", "scipy>=1.10"]
+nifti = []  # the reference export's packages are core dependencies now; kept so old install lines work
+fixtures = ["scikit-image>=0.21", "matplotlib>=3.6"]
 dev = ["pyflakes>=3.0"]
 
 [project.scripts]
@@ -31,4 +35,5 @@ Repository = "https://github.com/psweens/V-System"
 
 [tool.setuptools]
 py-modules = ["main", "vSystem", "libGenerator", "analyseGrammar", "utils", "computeVoxel", "preprocessing", "visuals", "check_connectivity",
-              "graph", "spatial", "tortuosity", "collisions", "anastomosis", "describe", "join", "library", "guidance", "frames", "connections", "bed", "reference"]
+              "graph", "spatial", "tortuosity", "collisions", "anastomosis", "describe", "join", "library", "guidance", "frames", "connections", "bed", "reference",
+              "recipes", "fixtures"]

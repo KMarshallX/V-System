@@ -72,7 +72,7 @@ def run_main(argv):
     """main.main(argv) with its output captured; returns (status, SystemExit or None)."""
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
-            return main.main(argv), None
+            return main.main(["--original_export"] + argv), None
         except SystemExit as caught:
             return None, caught
 

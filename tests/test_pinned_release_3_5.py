@@ -530,10 +530,12 @@ CLI_CASES = (("cli_tree", ["--count", "1", "--seed", "7", "--volume", "48", "48"
                                                          {"below": None, "field": "plane", "normal": [1, 0, 0],
                                                           "length": 4.0, "bank": True}]),
                                "--root-offsets", "[[1.5, 0.0, -2.0]]"]))
+# the current command line needs --original_export for the TIFF outputs; an old release has no such flag
+ORIGINAL = ["--original_export"] if any(a.dest == "original_export" for a in main.build_parser()._actions) else []
 for name, argv in CLI_CASES:
     directory = os.path.join(out_dir, name)
     with contextlib.redirect_stdout(io.StringIO()):
-        status = main.main(argv + ["--out", directory])
+        status = main.main(ORIGINAL + argv + ["--out", directory])
     written = sorted(os.listdir(directory))
     hashes[name] = {"status": status, "files": written}
     facts[name], extras[name] = {}, {}

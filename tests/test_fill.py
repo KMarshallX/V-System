@@ -90,7 +90,7 @@ class OptionTests(unittest.TestCase):
                 "--capillary-generations", "1", "--capillary-runs", "2"]
         with tempfile.TemporaryDirectory() as out:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main.main(argv + ["--out", out]), 0)
+                self.assertEqual(main.main(["--original_export"] + argv + ["--out", out]), 0)
             stem = next(name[:-5] for name in os.listdir(out) if name.endswith(".json"))
             with open(os.path.join(out, stem + ".json")) as handle:
                 sidecar = json.load(handle)
@@ -136,7 +136,7 @@ class OptionTests(unittest.TestCase):
             with self.subTest(refusal=name):
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
-                        main.main(base + argv + ["--out", out])
+                        main.main(["--original_export"] + base + argv + ["--out", out])
                     self.assertNotEqual(caught.exception.code, 0)
                     self.assertEqual(os.listdir(out), [])
 
@@ -258,7 +258,7 @@ class FillFamilyRunTests(unittest.TestCase):
                 argv = ["--family", family] + library.member_argv(family, 2.52)[2:] + ["--count", "1", "--seed", "3"]
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(main.main(argv + ["--out", out]), 0)
+                        self.assertEqual(main.main(["--original_export"] + argv + ["--out", out]), 0)
                     stem = next(name[:-5] for name in os.listdir(out) if name.endswith(".json"))
                     with open(os.path.join(out, stem + ".json")) as handle:
                         sidecar = json.load(handle)

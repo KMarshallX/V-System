@@ -1,0 +1,453 @@
+{
+  "manifest_version": "1.0",
+  "dataset_id": "vsystem_laplacian_50um_v1",
+  "purpose": "A fixed regression dataset for Laplacian vessel skeletonization, progressing from simple controls to tortuous trees and sparse-loop networks.",
+  "artifact_type": "Agent handoff specification; not a native V-System configuration file.",
+  "agent_task": "Generate and validate the 12 fixtures specified here using the current V-System geometry and renderer, with a small reproducible adapter where necessary. Deliver the fixture artifacts, generation script, resolved manifest, validation report and PNG previews. Do not implement changes to skelhub evaluate as part of this task.",
+  "repositories": {
+    "vsystem": "/scratch/user/uqmxu4/Tools/V-System",
+    "skelhub": "/scratch/user/uqmxu4/Tools/SkelHub",
+    "portability": "Paths identify the inspected repositories; resolve their locations in the destination workspace."
+  },
+  "decision_policy": {
+    "user_requirements": [
+      "All primary fixtures use isotropic voxel spacing of 50 micrometres.",
+      "The dataset reaches approximately 50 micrometres as its smallest vessel diameter; every fixture need not reach that diameter.",
+      "No root-vessel diameter exceeds 500 micrometres; roots vary between fixtures.",
+      "Clearly separated simple, moderate and complex levels.",
+      "Only one or two straight controls; most fixtures contain tortuous branches.",
+      "One or two complex fixtures contain deliberate loops."
+    ],
+    "agreed_plan": "12 fixtures: two straight controls, eight tortuous loop-free fixtures, and two tortuous fixtures with loops. Use the per-fixture root diameters as fixed values.",
+    "engineering_defaults": "Seeds, branch-count ranges, persistence values, numerical quality thresholds, output conventions and candidate budget below are proposed engineering choices, not biological measurements. Preserve user requirements and the agreed fixture identities.",
+    "tuning": "The generation agent may tune proposed geometry parameters and desired branch counts to obtain valid fixtures. Record every adjustment and its reason in resolved_manifest.json. Do not silently relax voxel spacing, root diameters, fixture identities, non-clipping, or topology requirements. Ask if those requirements conflict or prove infeasible.",
+    "selection": "Select candidates by predefined geometry and rendering checks, never by how well the Laplacian algorithm performs. Keep rejected-candidate reasons.",
+    "scope": "Create local artifacts and a small adapter. Do not overwrite existing datasets, modify .gitignore, push fixture data to a remote repository, or perform broad V-System/SkelHub refactors."
+  },
+  "common": {
+    "length_unit": "um",
+    "voxel_spacing_um": [
+      50.0,
+      50.0,
+      50.0
+    ],
+    "root_diameter_max_um": 500.0,
+    "diameter_policy": {
+      "generation_floor_um": 50.0,
+      "near_floor_band_um": [
+        50.0,
+        75.0
+      ],
+      "description": "Disable anomalies. Do not draw vessels below 50 um, allowing only numerical roundoff. F08 must contain at least three terminal branches with calibre in the near-floor band over a nonzero length; seek additional near-floor branches in F09-F12. Verify actual sampled diameters.",
+      "d_min_note": "Current vSystem.F does not draw a stem whose input diameter is below d_min. Local stenosis can otherwise reduce diameter below it; interpolation and custom geometry still require final checks. d_min does not guarantee that a finite-depth tree reaches the floor.",
+      "complexity_note": "Reaching 50 um from a 500 um root through symmetric Murray-law bifurcation alone needs many generations. For controlled fixtures, use documented asymmetric branches or explicit smoothly tapered paths rather than making every fixture a huge binary tree."
+    },
+    "fit": "voxel_size",
+    "connect": true,
+    "clip_axes": [],
+    "grow_in_volume": false,
+    "shape_policy": "Derive each volume shape from the final geometry bounds including radii and an empty border of at least four voxels on every side. Use integer XYZ dimensions. Never auto-rescale geometry to fit a chosen array, clip vessels, or change voxel spacing. Record the chosen dimensions and physical field of view.",
+    "geometry": {
+      "aneurysm_prob": 0.0,
+      "stenosis_prob": 0.0,
+      "avoid_collisions": true,
+      "collision_margin_um_initial": 100.0,
+      "collision_attempts_initial": 20,
+      "subdivisions_initial": 4,
+      "epsilon_initial": 6.0,
+      "randmarg_initial": 0.15,
+      "murray_exponent_initial": 3.0,
+      "roll_angle_degrees_initial": 70.0,
+      "point_spacing": "Measure the largest centreline sample spacing. Densify continuous geometry where needed before independent collision validation; a point-only check is insufficient.",
+      "junctions": "Allow the intended local overlap of parent/daughter tubes at junctions; exclude only documented local junction neighbourhoods from nonincident-vessel clearance checks.",
+      "defaults_note": "These are initial settings for generated trees, not requirements that every explicit control shape must invoke the random growth routine. Record all effective settings."
+    },
+    "reproducibility": {
+      "accepted_primary_realizations_per_fixture": 1,
+      "candidate_budget_initial": 32,
+      "candidate_seed_rule": "base_seed + 1000 * candidate_index, with candidate_index starting at zero. F06 and F07 use the same selected candidate index.",
+      "record": [
+        "actual seed",
+        "Python and dependency versions",
+        "V-System commit and dirty state",
+        "adapter source and hash",
+        "effective parameters",
+        "candidate selection history",
+        "collision and boundary events",
+        "artifact SHA-256 checksums"
+      ],
+      "failure_policy": "If the budget is exhausted, report the unmet criteria and request a decision rather than silently accepting an invalid fixture."
+    },
+    "interpretation": [
+      "At this spacing, 50 um vessels are one voxel across. Their sampling limits are part of the dataset.",
+      "V-System connect=True forces narrow tubes into connected voxel paths; record this and check for accidental contacts.",
+      "The saved paths are generating-centreline references, not a claim of exact mathematical medial axes of the voxelized vessel union.",
+      "Curvature settings are synthetic test conditions, not validated anatomical reconstructions.",
+      "Difficulty levels describe increasing intended challenges, not a guaranteed ordering of algorithm scores."
+    ]
+  },
+  "implementation_guidance": {
+    "current_interfaces": [
+      "main.grow_network and main.save_network for generated centrelines and graph archives.",
+      "computeVoxel.fit_to_volume and computeVoxel.rasterise_segments/process_network for rendering.",
+      "computeVoxel.rasterise_line for connected reference paths.",
+      "graph.build, graph.segments and graph.betti for continuous graph structure.",
+      "describe.describe for measured geometry, components, cycles and sampled-point clearance."
+    ],
+    "explicit_shapes": "F01-F04 may use a small custom grammar or explicit smooth centreline polylines with diameters, rendered by V-System. F08 and F10 may use controlled local construction to guarantee thin daughters or close approaches. Preserve and label that provenance; do not pretend every shape comes from an unmodified CLI preset.",
+    "straight_controls": "Construct a genuinely straight tube or piecewise-straight Y. Setting stem_angle=0 alone does not make a complete branching tree collinear. Disable local anomalies.",
+    "loops": "Use anastomose with mode any, or reproducibly select a small number of valid bridges from its output. Measure independent cycles; anastomosis_fraction does not specify their count. Do not use mesh/tumour presets without overriding and documenting their bundled settings.",
+    "reference_skeleton": "Map the final accepted centrelines once into the vessel volume grid and trace the graph edges as connected voxel paths. Do not create ground truth by skeletonizing the vessel mask. Use identical segment traversal/tie-breaking to the renderer where possible. Never connect across NaN separators or omit explicit bridge edges.",
+    "rendering_order": "Finalize geometry, diameters, graph and bridges first; then determine the shape and coordinate transform; then render mask and reference. Do not fit the reference separately after changing radii.",
+    "independent_validation": "describe.py checks sampled points using junction exemptions. Supplement it with segment/tube clearance and rendered topology checks. Passing the generator check alone is not sufficient.",
+    "separation_of_layers": "Keep fixture generation and conversion in a standalone dataset adapter. The skeletonizer consumes the vessel mask; evaluation consumes standardized references, not V-System internals."
+  },
+  "coordinates_and_formats": {
+    "archive_coordinates": "XYZ coordinates and diameters in um; V-System nodes have shape (4,N) with NaN separators and edges have shape (2,E). Preserve canonical connectivity and include stable node/branch IDs in supplementary graph data.",
+    "nifti_array_axes": [
+      "x",
+      "y",
+      "z"
+    ],
+    "nifti_dtype": "uint8",
+    "nifti_values": [
+      0,
+      1
+    ],
+    "nifti_spatial_unit": "mm",
+    "nifti_spacing_mm": [
+      0.05,
+      0.05,
+      0.05
+    ],
+    "transform": "Store a homogeneous grammar_um_to_voxel_xyz matrix T. With spacing 50 um and no rotation, q = p_um / 50 + t_vox. Use NIfTI affine diag(0.05,0.05,0.05,1) with translation -0.05*t_vox mm, so voxel q maps back to p_um/1000. Set matching qform and sform. Mask and reference have identical shape, affine and units.",
+    "tiff_note": "V-System TIFFs are ZYX and 0/255. Prefer conversion from the in-memory XYZ 0/1 mask; do not copy TIFF axes or values blindly. TIFF output is optional.",
+    "preview": "One focused PNG per primary fixture showing the mask and generating centreline, with the fixture ID, scale and a short legend. Label these as synthetic geometry. Use no SVG files."
+  },
+  "outputs": {
+    "suggested_local_output_directory": "/scratch/project/simvascmri/data/Synthetics/vsystem_laplacian_50um_v1",
+    "directory_policy": "Resolve relative to the generating agent workspace and record the absolute path. Keep generated data local; refuse an existing nonempty destination unless a safe new run directory is chosen.",
+    "dataset_files": [
+      "generate_fixtures.py",
+      "manifest.requested.json",
+      "manifest.resolved.json",
+      "dataset_index.csv",
+      "validation_report.json",
+      "README.md"
+    ],
+    "per_fixture_files": [
+      "vessel_mask.nii.gz",
+      "reference_skeleton.nii.gz",
+      "reference_network.npz",
+      "reference_graph.json",
+      "metadata.json",
+      "preview.png"
+    ],
+    "graph_json_contract": "Nodes: stable ID and XYZ position in um. Branches: stable ID, endpoint node IDs, ordered XYZ samples in um, and matching diameter samples in um. Include isolated nodes if any and preserve parallel branches and self-loops. Distinguish topology nodes from sampling vertices.",
+    "loop_support_files": "F11/F12 also save their pre-bridge network and mask under an unbridged/ subdirectory, using the final loop fixture grid and affine. These are supporting counterparts, not extra primary fixtures.",
+    "metadata_required": [
+      "fixture ID and level",
+      "actual root and diameter range",
+      "shape and physical field of view",
+      "coordinate matrices and units",
+      "effective generator/adapter parameters",
+      "seed and provenance",
+      "intended and measured graph topology",
+      "rendered topology",
+      "branch-count convention",
+      "arc/chord and curvature statistics",
+      "clearance statistics",
+      "collision/termination events",
+      "QA pass/fail and warnings",
+      "artifact checksums"
+    ],
+    "optional_disabled_by_default": [
+      "12.5 um supplementary renders",
+      "additional stochastic realizations",
+      "noise or segmentation defects",
+      "anisotropic spacing",
+      "Laplacian algorithm runs",
+      "changes to SkelHub evaluation metrics"
+    ]
+  },
+  "validation": {
+    "hard_checks": [
+      "Exactly 12 accepted primary fixtures with IDs F01-F12 and the specified root diameters, within numerical roundoff.",
+      "Primary NIfTI spacing is 0.05 mm on each axis; shape, affine and units match within each prediction-reference input pair.",
+      "Volumes are nonempty, binary uint8, with reference_skeleton contained in vessel_mask.",
+      "No foreground touches the padded volume boundary; geometric tubes and caps are fully inside the field of view.",
+      "All finite geometry and diameter samples are valid; diameters are at least 50 um and no more than 500 um with anomalies disabled.",
+      "F01-F10 have one graph component and zero independent cycles. F11 has one component and one cycle; F12 has one component and two or three cycles.",
+      "Continuous nonincident tubes do not collide outside intended local junction overlaps. Rendered masks do not acquire unintended branch connections.",
+      "Measure connected components, cavities and cycles in the rendered mask under a documented digital-topology convention. Require the intended component/cycle counts and no enclosed cavities; use suitable Euler/Betti calculations rather than cycles in a naive 26-neighbour voxel graph.",
+      "Reference path rasterization is also checked for accidental contacts and topology changes under its declared connectivity. If rasterization cannot retain the reference graph topology at 50 um, reject or adjust the geometry; do not alter the graph silently.",
+      "F08 contains at least three distinct terminal branches with a 50-75 um calibre segment.",
+      "Every primary fixture has inspectable PNG output and complete generation provenance."
+    ],
+    "desired_checks": [
+      "F03-F12 show visible smooth tortuosity in continuous geometry and meaningful bending at the target voxel spacing.",
+      "Measure arc/chord on open graph branches between endpoints/junctions after removing zero-length edges, not on individual sample-to-sample edges. Treat closed branches separately.",
+      "F07 has greater measured tortuosity than F06 while retaining the same diameter and topology specification. If avoidance changes topology, document this and identify the comparison as approximate.",
+      "F10 has at least one prolonged close approach between nonincident branches, including a segment extending at least three voxels along the branches, with no digital contact. Target 100-150 um minimum surface clearance at that approach; tune if needed.",
+      "F11/F12 loop openings remain clearly resolved, initially targeting at least three voxels of background across the opening.",
+      "Desired branch-count ranges below refer to maximal paths between degree-not-two vertices, after contracting degree-two sampling vertices; counts are geometry targets, not acceptance based on algorithm performance."
+    ],
+    "reporting": "Report each check with measured values and pass/fail, including unresolved checks. Never report full acceptance when a hard check has not been measured. A topology mismatch must be explained, not hidden by a high geometric overlap score.",
+    "adapter_verification": "Verify a known straight line and Y for coordinate conversion, spacing and graph connectivity. Verify save/reload equality and exact rerendering of at least one archived fixture. Verify the loop-count check on a known open and closed path. Do not require new tests that merely restate manifest values."
+  },
+  "fixtures": [
+    {
+      "id": "F01",
+      "level": 0,
+      "name": "straight_oblique_tube",
+      "root_diameter_um": 200.0,
+      "base_seed": 16001,
+      "construction": "explicit",
+      "tortuosity_persistence_initial": null,
+      "desired_branch_count_range": [
+        1,
+        1
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Centreline placement and endpoint shrinkage.",
+      "recipe": "Single constant-diameter straight tube, oblique to every principal grid axis; one open branch, two tips, no junctions."
+    },
+    {
+      "id": "F02",
+      "level": 0,
+      "name": "straight_y",
+      "root_diameter_um": 250.0,
+      "base_seed": 16002,
+      "construction": "explicit",
+      "tortuosity_persistence_initial": null,
+      "desired_branch_count_range": [
+        3,
+        3
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Junction and daughter-branch recovery.",
+      "recipe": "One root and two straight daughter branches with resolved calibre, one degree-three junction and three tips. Use an oblique bifurcation plane."
+    },
+    {
+      "id": "F03",
+      "level": 1,
+      "name": "tortuous_single_vessel",
+      "root_diameter_um": 200.0,
+      "base_seed": 16003,
+      "construction": "walk_or_explicit",
+      "tortuosity_persistence_initial": 12,
+      "desired_branch_count_range": [
+        1,
+        1
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Curve preservation and shortcut detection.",
+      "recipe": "Single constant-diameter smooth nonplanar curved vessel; preserve two tips and no junctions. Avoid self-contact."
+    },
+    {
+      "id": "F04",
+      "level": 1,
+      "name": "tortuous_y",
+      "root_diameter_um": 250.0,
+      "base_seed": 16004,
+      "construction": "walk_or_explicit",
+      "tortuosity_persistence_initial": 12,
+      "desired_branch_count_range": [
+        3,
+        3
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Curvature and junction preservation.",
+      "recipe": "Curved root and daughters; one degree-three junction and three tips. Keep daughter diameters comfortably resolved."
+    },
+    {
+      "id": "F05",
+      "level": 1,
+      "name": "small_asymmetric_tree",
+      "root_diameter_um": 300.0,
+      "base_seed": 16005,
+      "construction": "walk",
+      "tortuosity_persistence_initial": 12,
+      "desired_branch_count_range": [
+        5,
+        11
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Asymmetric daughters and tapering.",
+      "recipe": "Small tree with unequal daughter diameters and lengths; preserve smooth bends and separated branches."
+    },
+    {
+      "id": "F06",
+      "level": 2,
+      "name": "moderate_tree",
+      "root_diameter_um": 350.0,
+      "base_seed": 16006,
+      "construction": "walk",
+      "tortuosity_persistence_initial": 12,
+      "desired_branch_count_range": [
+        15,
+        39
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Whole-tree recovery.",
+      "recipe": "Moderate branching with generous clearance. Save the pre-avoidance branching specification for the F07 comparison."
+    },
+    {
+      "id": "F07",
+      "level": 2,
+      "name": "moderate_tree_stronger_curvature",
+      "root_diameter_um": 350.0,
+      "base_seed": 16006,
+      "construction": "walk",
+      "tortuosity_persistence_initial": 6,
+      "desired_branch_count_range": [
+        15,
+        39
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Sensitivity to increased tortuosity.",
+      "recipe": "Use the same accepted seed index, branching specification and diameters as F06; increase curvature. Report any unavoidable topology difference caused by collision rejection.",
+      "paired_with": "F06"
+    },
+    {
+      "id": "F08",
+      "level": 2,
+      "name": "thin_short_daughters",
+      "root_diameter_um": 500.0,
+      "base_seed": 16008,
+      "construction": "walk_with_controlled_daughters",
+      "tortuosity_persistence_initial": 8,
+      "desired_branch_count_range": [
+        15,
+        59
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Loss of thin terminal branches near thick parents.",
+      "recipe": "Include at least three terminal daughters with 50-75 um calibre over a nonzero length. Aim for short daughters of 3-6 voxel lengths, alongside longer resolved branches. Smoothly transition calibre; avoid artificial bulbs or discontinuous radius jumps."
+    },
+    {
+      "id": "F09",
+      "level": 3,
+      "name": "dense_tortuous_tree",
+      "root_diameter_um": 450.0,
+      "base_seed": 16009,
+      "construction": "walk",
+      "tortuosity_persistence_initial": 8,
+      "desired_branch_count_range": [
+        61,
+        149
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "Combined branching, tapering and curvature difficulty.",
+      "recipe": "Dense but collision-free tree with varied diameters. Include thin terminals where feasible without forcing excessive branching."
+    },
+    {
+      "id": "F10",
+      "level": 3,
+      "name": "close_non_touching_branches",
+      "root_diameter_um": 400.0,
+      "base_seed": 16010,
+      "construction": "walk_with_controlled_close_approach",
+      "tortuosity_persistence_initial": 8,
+      "desired_branch_count_range": [
+        31,
+        99
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        0,
+        0
+      ],
+      "anastomose": false,
+      "purpose": "False connections between spatially close branches.",
+      "recipe": "Include a controlled prolonged near-parallel approach of nonincident branches. Confirm separation under 26-connectivity in the mask; projection overlap alone is not physical contact."
+    },
+    {
+      "id": "F11",
+      "level": 3,
+      "name": "tortuous_single_cycle",
+      "root_diameter_um": 350.0,
+      "base_seed": 16011,
+      "construction": "walk_plus_selected_bridges",
+      "tortuosity_persistence_initial": 8,
+      "desired_branch_count_range": [
+        15,
+        59
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        1,
+        1
+      ],
+      "anastomose": true,
+      "purpose": "Preservation of one genuine loop.",
+      "recipe": "Add a validated bridge within a connected tortuous tree to give exactly one independent cycle. Keep the unbridged counterpart on the same grid."
+    },
+    {
+      "id": "F12",
+      "level": 3,
+      "name": "dense_sparse_cycles",
+      "root_diameter_um": 500.0,
+      "base_seed": 16012,
+      "construction": "walk_plus_selected_bridges",
+      "tortuosity_persistence_initial": 6,
+      "desired_branch_count_range": [
+        61,
+        149
+      ],
+      "required_graph_components": 1,
+      "required_independent_cycle_range": [
+        2,
+        3
+      ],
+      "anastomose": true,
+      "purpose": "Preservation of several loops in a complex network.",
+      "recipe": "Dense tortuous network with exactly two or three independent cycles and resolved openings. Keep the unbridged counterpart on the same grid; do not generate a highly looped capillary mesh."
+    }
+  ]
+}

@@ -149,7 +149,7 @@ class GrowthTests(unittest.TestCase):
                 member = grow_member(family, ratio, seed)
                 with tempfile.TemporaryDirectory() as out:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        status = main.main(member["argv"] + ["--count", "1", "--seed", str(seed), "--out", out])
+                        status = main.main(["--original_export"] + member["argv"] + ["--count", "1", "--seed", str(seed), "--out", out])
                     self.assertEqual(status, 0)
                     stem = next(n[:-4] for n in os.listdir(out) if n.endswith(".npz"))
                     written = main.load_network(os.path.join(out, stem + ".npz"))
